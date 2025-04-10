@@ -106,6 +106,7 @@ endmodule
 
 //CHANGE:原先的分支预测模块pred容易与predecode混淆，因此将其名称改为BPU（Branch Prediction Unit）
 //拟采用Bi-Mode分支预测
+//这是AI写的，可能还有逻辑需要改正
 module BPU (
     input wire clk,
     input wire rst_n,
