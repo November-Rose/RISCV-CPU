@@ -26,7 +26,7 @@ module IF(
     input         clk,        // 全局时钟（上升沿触发）
     input         rst_n,      // 异步低电平复位（0复位，1正常工作）
     //========== 指令存储器接口 ==========//
-    output [31:0] instr_addr, // 指令存储器地址（4字节对齐，addr[1:0]=00）
+    output [31:0] instrmem_addr, // 指令存储器地址（4字节对齐，addr[1:0]=00）
     input  [31:0] instr_data, // 指令存储器数据（32位）
     //========== 分支预测器接口 ==========//
     input         f_en,       // 分支预测使能（1表示预测跳转）
@@ -70,7 +70,7 @@ module PC_reg (                         //原PC模块//
 endmodule
 
 module PC_MUX(
-    input         instrmem_addr,  //原先的PC值
+    input  [31:0] instrmem_addr,  //原先的PC值
     input         pred_f_en,       // 分支预测使能（1表示预测跳转）
     input  [31:0] pred_f_addr,     // 预测跳转地址（来自分支预测器）
     input         checkpre_flush,      // 冲刷信号（分支预测错误时置1）
@@ -83,7 +83,7 @@ module PC_MUX(
         end else if (pred_f_en) begin
             new_PC_addr = pred_f_addr; //分支预测使能时使用预测地址
         end else begin
-            new_PC_addr = new_PC_addr + 4; //默认情况下PC值加4
+            new_PC_addr = instrmem_addr + 4; //默认情况下PC值加4
         end
     end
 endmodule
@@ -96,6 +96,7 @@ module PC_enable(
     input        control_hazard_stall,//控制冒险的阻塞信号
     output       new_addr_en //新地址使能信号
 );
+
 assign new_addr_en = !predecode_stall && !data_hazard_stall && !control_hazard_stall; //当三个信号都为0时，new_addr_en为1
 endmodule
 
@@ -110,6 +111,8 @@ endmodule
 module BPU (
     input wire clk,
     input wire rst_n,
+    input wire jxx,
+    input wire bxx,
     input wire [31:0] instrmem_addr,  // 指令地址
     input wire brunch_taken,  // NOTES:此信号需要由交付单元给出。分支指令实际是否跳转，1表示跳转，0表示不跳转。
     input wire update_en,  // NOTES:此信号需要由交付单元给出。当分支指令完成时，update_en为1，表示需要更新预测表
@@ -134,12 +137,18 @@ module BPU (
 
     // 预测逻辑
     always @(*) begin
-        if (selector_table[selector_index] >= 2'b10) begin
+        if (jxx && !bxx) begin
+             pred_f_en = 1'b1;
+        end else if(bxx && !jxx) begin
+             if (selector_table[selector_index] >= 2'b10) begin
             // 选择T表
-            pred_f_en = (T_table[prediction_index] >= 2'b10) ? 1'b1 : 1'b0;
-        end else begin
+                pred_f_en = (T_table[prediction_index] >= 2'b10) ? 1'b1 : 1'b0;
+            end else begin
             // 选择NT表
-            pred_f_en = (NT_table[prediction_index] >= 2'b10) ? 1'b1 : 1'b0;
+                pred_f_en = (NT_table[prediction_index] >= 2'b10) ? 1'b1 : 1'b0;
+            end
+        end else begin
+            pred_f_en = 1'b0; // 非分支指令
         end
     end
 
@@ -205,4 +214,155 @@ module BPU (
         end
     end
 
+endmodule 
+
+//CHANGE:新增BTB模块用于预测分支指令跳转的地址
+// BTB模块定义，使用参数化设计，方便调整BTB大小和地址位宽
+module BTB #(
+    parameter BTB_SIZE = 16,  // BTB的条目数量，可根据需要调整
+    parameter ADDR_WIDTH = 32 // 地址位宽，可根据需要调整
+) (
+    input wire clk,           // 时钟信号，用于同步模块的操作
+    input wire rst_n,         // 异步复位信号，低电平有效，用于将BTB模块复位到初始状态
+    input wire jxx,
+    input wire bxx,
+    input wire [ADDR_WIDTH-1:0] instrmem_addr, // 分支指令的地址，用于查找和存储操作
+    //NOTES:target_addr在执行阶段产生，为预测地址与实际地址不一致时，分支指令的实际跳转地址
+    input wire [ADDR_WIDTH-1:0] target_addr, // 分支指令的目标地址，用于存储操作
+    //NOTES:update_en 信号的产生:执行阶段。比较实际的分支目标地址和 BTB 预测的目标地址。若两者不一致，表明预测错误，需要更新 BTB 中的信息；若一致，则说明预测正确。
+    input wire update_en,     // 更新使能信号，用于控制是否更新BTB中的信息
+    output reg [ADDR_WIDTH-1:0] predicted_target_addr, // 预测的分支目标地址，如果未命中则输出无效值
+    output reg btb_hit            // 命中信号，表示是否在BTB中找到匹配的分支指令地址
+);
+
+    // BTB条目结构体
+    // 存储分支指令的地址
+    reg [ADDR_WIDTH-1:0] btb_branch_addr [BTB_SIZE-1:0];
+    // 存储分支指令对应的目标地址
+    reg [ADDR_WIDTH-1:0] btb_target_addr [BTB_SIZE-1:0];
+    // 有效位，用于标记每个条目是否有效
+    reg valid [BTB_SIZE-1:0];
+    // 标志是否为分支指令
+    wire is_branch;
+    assign is_branch = jxx || bxx;
+
+    // LRU计数器，用于实现最近最少使用（LRU）替换策略
+    // lru_counter[i][j] 表示第i个条目相对于第j个条目的使用频率关系
+    reg [BTB_SIZE-1:0] lru_counter [BTB_SIZE-1:0];
+
+    integer i, j;
+    integer empty_index;
+    integer lru_index;
+    integer max_lru;
+    integer lru_sum;
+    // 异步复位和正常操作逻辑
+    always @(posedge clk or negedge rst_n) begin
+        // 异步复位操作
+        if (!rst_n) begin
+            // 遍历BTB的所有条目
+            for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                // 将所有条目的有效位置为0，表示无效
+                valid[i] <= 1'b0;
+                // 初始化LRU计数器
+                for (j = 0; j < BTB_SIZE; j = j + 1) begin
+                    lru_counter[i][j] <= 1'b0;
+                end
+            end
+        end else begin
+            if (is_branch) begin
+                // 正常操作
+                // 查找操作
+                // 初始化命中信号为0，表示未命中
+                btb_hit <= 1'b0;
+                // 初始化预测的目标地址为全零，表示无效值
+                predicted_target_addr <= {ADDR_WIDTH{1'b0}};
+                // 遍历BTB的所有条目
+                for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                    // 检查当前条目是否有效且分支指令地址匹配
+                    if (valid[i] && btb_branch_addr[i] == instrmem_addr) begin
+                        // 命中，将命中信号置为1
+                        btb_hit <= 1'b1;
+                        // 输出预测的目标地址
+                        predicted_target_addr <= btb_target_addr[i];
+                        // 更新LRU计数器
+                        for (j = 0; j < BTB_SIZE; j = j + 1) begin
+                            if (j != i) begin
+                                // 其他条目相对于当前条目更旧
+                                lru_counter[j][i] <= 1'b1;
+                            end else begin
+                                // 当前条目相对于自身最新
+                                lru_counter[j][i] <= 1'b0;
+                            end
+                        end
+                    end
+                end
+            end
+
+            // 存储操作
+            if (is_branch && !btb_hit) begin
+                empty_index = -1;
+                lru_index = 0;
+                max_lru = 0;
+                // 查找空闲条目
+                for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                    if (!valid[i]) begin
+                        empty_index = i;
+                        break;
+                    end
+                end
+                // 如果没有空闲条目，使用LRU策略选择要替换的条目
+                if (empty_index == -1) begin
+                    for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                        lru_sum = 0;
+                        // 计算每个条目的LRU计数器之和
+                        for (j = 0; j < BTB_SIZE; j = j + 1) begin
+                            lru_sum = lru_sum + lru_counter[i][j];
+                        end
+                        if (lru_sum > max_lru) begin
+                            max_lru = lru_sum;
+                            lru_index = i;
+                        end
+                    end
+                    // 替换LRU条目
+                    btb_branch_addr[lru_index] <= instrmem_addr;
+                    btb_target_addr[lru_index] <= target_addr;
+                    valid[lru_index] <= 1'b1;
+                    // 更新LRU计数器
+                    for (j = 0; j < BTB_SIZE; j = j + 1) begin
+                        if (j != lru_index) begin
+                            lru_counter[j][lru_index] <= 1'b1;
+                        end else begin
+                            lru_counter[j][lru_index] <= 1'b0;
+                        end
+                    end
+                end else begin
+                    // 使用空闲条目存储新的分支信息
+                    btb_branch_addr[empty_index] <= instrmem_addr;
+                    btb_target_addr[empty_index] <= target_addr;
+                    valid[empty_index] <= 1'b1;
+                    // 更新LRU计数器
+                    for (j = 0; j < BTB_SIZE; j = j + 1) begin
+                        if (j != empty_index) begin
+                            lru_counter[j][empty_index] <= 1'b1;
+                        end else begin
+                            lru_counter[j][empty_index] <= 1'b0;
+                        end
+                    end
+                end
+            end
+
+            // 更新操作
+            if (update_en) begin
+                // 如果预测错误，更新目标地址
+                if (btb_hit && btb_target_addr[i] != target_addr) begin
+                    for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                        if (valid[i] && btb_branch_addr[i] == instrmem_addr) begin
+                            btb_target_addr[i] <= target_addr;
+                        end
+                    end
+                end
+            end
+        end
+    end
 endmodule    
+
