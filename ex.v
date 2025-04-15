@@ -22,7 +22,7 @@ module ex (
     input [31:0] nextpc,//下条指令的pc
 
     output [31:0] exresult,
-    output [31:0] result_address,
+    output [31:0] result_address,//仅仅用于访存load与store语句
     output stall,
     output flush,
     output [31:0] correctpc
@@ -45,8 +45,7 @@ module ex (
     wire [31:0] alu_result;
     wire [31:0] op1, op2;
     wire zero;
-    wire result;
-    assign exresult=result;
+    
    // 根据opcode和funct生成alu_op的逻辑
 always @(*) begin
     case (op)
@@ -155,10 +154,10 @@ end
         correctpcreg=jumpflag?(pc+imm):(pc+4);//冒险bug
         end
         else if (op[6:0]==7'b1101111) begin
-            correctpcreg=result;
+            correctpcreg=alu_result;
         end
         else if (op[6:0]==7'b1100111) begin
-            correctpcreg=result;
+            correctpcreg=alu_result;
         end
         else begin
             correctpcreg=31'd0;
@@ -166,6 +165,6 @@ end
     end
     assign flush=jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0;
     assign correctpc=correctpcreg;
-    // assign correctpc=correctpcreg;
-
+    assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
+    assign exresult=(op == 7'b0100011)?data2:alu_result;
 endmodule

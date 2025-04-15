@@ -13,7 +13,7 @@ module decoder (
     output [4:0]  rd_addr,       // 目标寄存器地址
     output        rd_en,         // 目标寄存器写使能
     //output [31:0] instr_addr_o,  // 传递指令地址（用于JALR等）
-    output [4:0]  mem_op,        // 内存操作类型（LB/LH/LW/LBU/LHU/SB/SH/SW）,低3位位datamem里面的op，高2位位r_en和w_enw_en
+    output [4:0]  mem_op,        // 内存操作类型（LB/LH/LW/LBU/LHU/SB/SH/SW）,低3位位datamem里面的op，高2位位r_en和w_en
     output        jump_en,       // 跳转指令使能
     
     //========== 输出到RegBag ==========//
@@ -30,7 +30,7 @@ module decoder (
     assign rd_addr = instr[11:7];
     assign rs1_addr= instr[19:15];
     assign rs2_addr= instr[24:20];
-    assign instr_addr_o = instr_addr_i;  // 直传指令地址
+    //assign instr_addr_o = instr_addr_i;  // 直传指令地址
 
     // ================= 立即数生成 =================
     wire [31:0] i_imm = {{20{instr[31]}}, instr[31:20]};                    // I-type
@@ -95,6 +95,6 @@ module decoder (
     end
     //产生memop
     assign mem_op[2:0] = mem_op_reg;
-    assign mem_op[3]=load//r_en
-    assign mem_op[4]=store//w_en
+    assign mem_op[3]=load;//r_en
+    assign mem_op[4]=store;//w_en
 endmodule

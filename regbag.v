@@ -21,14 +21,14 @@ module regbag (
 
 // 寄存器堆声明（x0始终为0）
 reg [31:0] register [1:31];  // x1-x31可写，x0硬连线为0
-
+integer i;
 //==============================
 // 写操作（同步时序逻辑）
 //==============================
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         // 异步复位（所有寄存器清零）
-        for (integer i = 1; i < 32; i = i + 1) begin
+        for (i = 1; i < 32; i = i + 1) begin
             register[i] <= 32'b0;
         end
     end
@@ -39,18 +39,22 @@ always @(posedge clk or negedge rst_n) begin
 end
 
 //==============================
-// 读端口1（组合逻辑）
+// 读端口1（带旁路逻辑）
 //==============================
-assign idexreg_r_data1 = (!decoder_r_en1) ? 32'b0 :          // 读使能关闭时输出0
-                         (decoder_r_addr1 == 5'b0) ? 32'b0 :  // x0始终返回0
-                         register[decoder_r_addr1];            // 正常读取
+assign idexreg_r_data1 = (!decoder_r_en1) ? 32'b0 :          // 读使能关闭
+                        (decoder_r_addr1 == 5'b0) ? 32'b0 :  // x0处理
+                        // 写旁路：如果正在写入相同地址，直接返回待写入值
+                        (wb_w_en && (wb_w_addr == decoder_r_addr1)) ? wb_w_data :
+                        register[decoder_r_addr1];            // 正常读取
 
 //==============================
-// 读端口2（组合逻辑）
+// 读端口2（带旁路逻辑）
 //==============================
-assign idexreg_r_data2 = (!decoder_r_en2) ? 32'b0 :          // 读使能关闭时输出0
-                         (decoder_r_addr2 == 5'b0) ? 32'b0 :  // x0始终返回0
-                         register[decoder_r_addr2];            // 正常读取
+assign idexreg_r_data2 = (!decoder_r_en2) ? 32'b0 :          // 读使能关闭
+                        (decoder_r_addr2 == 5'b0) ? 32'b0 :  // x0处理
+                        // 写旁路
+                        (wb_w_en && (wb_w_addr == decoder_r_addr2)) ? wb_w_data :
+                        register[decoder_r_addr2];            // 正常读取
 
 
 endmodule

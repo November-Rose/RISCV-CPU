@@ -50,44 +50,55 @@ assign stall=load&(flag[1]|flag[0]);
 //5选2决定op1，op2
 reg [31:0] op1reg;
 reg [31:0] op2reg;
-always@(*)
-begin
-    if(opcode==7'b1100011)begin//分支部分branch
-        op1reg=data1;
-        op2reg=data2;
+always @(*) begin
+    if (opcode == 7'b1100011) begin // branch
+        op1reg = data1;
+        op2reg = data2;
     end
-    else if(opcode==7'b1101111) begin//jal
-        op1reg=pc;
-        op2reg=imm;
+    else if (opcode == 7'b1101111) begin // jal
+        op1reg = pc;
+        op2reg = imm;
     end
-    else if(opcode==7'b1100111) begin//jalr
-        op1reg=data1;
-        op2reg=imm;
+    else if (opcode == 7'b1100111) begin // jalr
+        op1reg = data1;
+        op2reg = imm;
     end
-    else begin//其他：有立即数则op2为立即数，其他看看冲突
-        if(imm_en) begin
-            op2reg=imm;
-            case(flag)
-            4'd0000:op1reg=data1;
-            4'd0001:op1reg=exdata;//只要不产生停顿，就不会有0001+ld的情况；如果ld造成停顿，ld语句自然成为rd的第2个相当于隔离了2个周期，自然变成0100
-            4'd0100:op1reg=memdata;
-            default:op1reg=32'd0;
+    else begin // 其他情况
+        if (imm_en) begin
+            op2reg = imm; // op2 固定为立即数
+            case (flag)
+                4'b0000: op1reg = data1;
+                4'b0001: op1reg = exdata;
+                4'b0100: op1reg = memdata;
+                default: op1reg = 32'd0;
             endcase
         end
         else begin
-            case(flag)//解读：不可能有11xx，xx11因为rs1不等于rs2，不可能有1x1x，x1x1，因为这样的程序无意义因此最多1个1；
-            4'd0000:op1reg=data1;
-                    op2reg=data2;
-            4'd0001:op1reg=exdata;
-                    op2reg=data2;
-            4'd0100:op1reg=memdata;
-                    op2reg=data2;
-            4'd1000:op1reg=data1;
-                    op2reg=memdata;
-            4'd0010:op1reg=data1;
-                    op2reg=exdata;
-            default:op1reg=32'd0;
-                    op2reg=32'd0;
+            case (flag) // 无立即数时，op1 和 op2 需同时处理
+                4'b0000: begin
+                    op1reg = data1;
+                    op2reg = data2;
+                end
+                4'b0001: begin
+                    op1reg = exdata;
+                    op2reg = data2;
+                end
+                4'b0100: begin
+                    op1reg = memdata;
+                    op2reg = data2;
+                end
+                4'b1000: begin
+                    op1reg = data1;
+                    op2reg = memdata;
+                end
+                4'b0010: begin
+                    op1reg = data1;
+                    op2reg = exdata;
+                end
+                default: begin
+                    op1reg = 32'd0;
+                    op2reg = 32'd0;
+                end
             endcase
         end
     end

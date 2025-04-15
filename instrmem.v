@@ -10,13 +10,13 @@ localparam ADDR_WIDTH = $clog2(MEM_DEPTH);
 
 // ===== 存储器声明 =====
 reg [31:0] mem [0:MEM_DEPTH-1];
-
+integer i = 0;
 // ===== 存储器初始化（纯组合逻辑）=====
 always @(*) begin
     // 默认填充NOP指令（确保未初始化地址返回安全值）
     if(!rst_n)
     begin
-    for (integer i = 0; i < MEM_DEPTH; i = i + 1) begin
+    for (i = 0; i < MEM_DEPTH; i = i + 1) begin
         mem[i] = 32'h00000013; // ADDI x0, x0, 0 (NOP)
     end
     end

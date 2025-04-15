@@ -31,15 +31,13 @@ module regbag (
     input         wb_w_en,      // 写使能信号（1有效，上升沿写入）
     input  [4:0]  wb_w_addr,   // 写地址（0-31对应x0-x31）
     input  [31:0] wb_w_data     // 写数据（32位）
-
 );
 endmodule
 
 module instrmem(
-    input clk,
-    input rst_n,
-    input [31:0] instr_addr,
-    output [31:0] instr_data
+    input         rst_n,        // 异步复位
+    input  [31:0] instr_addr,   // 字节地址
+    output [31:0] instr_data    // 指令输出
 );
 endmodule
 
@@ -68,7 +66,9 @@ module ifidreg(
     input [31:0] instrmem_instr_data,
     input checkpre_flush,
     input feedforward_stall,
-    output [31:0] decoder_instr
+    input [31:0] instr_addr_i,
+    output [31:0] decoder_instr,
+    output [31:0] instr_addr_o
 );
 endmodule
 
@@ -104,93 +104,81 @@ module idexreg(
     input rst_n,
     input checkpre_flush,
     input feedforward_stall,
+
     input [31:0] regbag_data1,
     input [31:0] regbag_data2,
-    input decoder_en1,
-    input decoder_en2,
-    input [31:0] imm,
-    input imm_en,
-    input [4:0] rd,
-    input rd_en,
-    input [6:0] op,
-    input [7:0] funct7,
-    input [2:0] funct3,
+    input en1_i,
+    input en2_i,
+    input decoder_en1_i,
+    input decoder_en2_i,
+    input [31:0] imm_i,
+    input imm_en_i,
+    input [4:0] rd_i,
+    input rd_en_i,
+    input [6:0] op_i,
+    input [7:0] funct7_i,
+    input [2:0] funct3_i,
+    input [4:0] mem_op_i,
+    input jump_en_i,
+    input [31:0] pc_i,
 
-    output [6:0] op,
-    output [7:0] funct7,
-    output [2:0] funct3,
-    output [4:0] rd,
-    output rd_en,
-    output [31:0] imm,
-    output imm_en,
-    output [31:0] data1,
-    output en1,
-    output [31:0] data2,
-    output en2
+    output [6:0] op_o,
+    output [7:0] funct7_o,
+    output [2:0] funct3_o,
+    output [4:0] rd_o,
+    output rd_en_o,
+    output [31:0] imm_o,
+    output imm_en_o,
+    output [31:0] data1_o,
+    output en1_o,
+    output [31:0] data2_o,
+    output en2_o,
+    output [4:0] mem_op_o,
+    output jump_en_o,
+    output [31:0] pc_o
 );
 endmodule
 
 
 // ====================== ex ======================
 module ex (
+    input clk,//仅仅为了串行存储rd，不会打破流水线时序
+    input rst_n,
     input en1,
     input en2,
     input imm_en,
-    input [31:0] imm,
-    input [31:0] rs1,
-    input [31:0] rs2,
-    input [4:0] rd_i,
     input rd_en,
+    input [4:0] rd,
+    input [4:0] rs1,
+    input [4:0] rs2,
+    input [31:0] imm,
+    input [31:0] data1,
+    input [31:0] data2,
+    input [4:0] mem_op,
+    input jump_en,
     input [6:0] op,
     input [7:0] funct7,
     input [2:0] funct3,
-    output [31:0] result,
-    output [31:0] result_address,//若需要存入数据存储器
-    output [4:0] rd_o,
+    input [31:0] exdata,
+    input [31:0] memdata,
+    input [31:0] pc,//这条指令的pc
+    input [31:0] nextpc,//下条指令的pc
+
+    output [31:0] exresult,
+    output [31:0] result_address,
+    output stall,
+    output flush,
+    output [31:0] correctpc
 );
 endmodule
+
 module alu (
-    input  [31:0] a,          // 操作数1（rs1）
-    input  [31:0] b,          // 操作数2（rs2 或立即数）
+    input  [31:0] a,          // 操作数1（来自寄存器rs1）
+    input  [31:0] b,          // 操作数2（来自寄存器rs2或立即数imm）
     input  [3:0]  alu_op,     // ALU操作码（由控制器生成）
     output reg [31:0] result, // 运算结果
-    output zero               // 结果是否为0（用于分支判断）
+    output zero               // 结果是否为0（用于分支指令判断）
 );
-
-    // ALU操作码定义（与控制器对应）
-    localparam OP_ADD  = 4'b0000;
-    localparam OP_SUB  = 4'b0001;
-    localparam OP_SLL  = 4'b0010;
-    localparam OP_SLT  = 4'b0011;
-    localparam OP_SLTU = 4'b0100;
-    localparam OP_XOR  = 4'b0101;
-    localparam OP_SRL  = 4'b0110;
-    localparam OP_SRA  = 4'b0111;
-    localparam OP_OR   = 4'b1000;
-    localparam OP_AND  = 4'b1001;
-
-    // 移位量（仅取b的低5位，RISC-V规范）
-    wire [4:0] shamt = b[4:0];
-
-    always @(*) begin
-        case (alu_op)
-            OP_ADD:  result = a + b;                    // ADD/ADDI
-            OP_SUB:  result = a - b;                    // SUB
-            OP_SLL:  result = a << shamt;               // SLL/SLLI
-            OP_SLT:  result = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0; // SLT/SLTI
-            OP_SLTU: result = (a < b) ? 32'd1 : 32'd0;  // SLTU/SLTIU
-            OP_XOR:  result = a ^ b;                    // XOR/XORI
-            OP_SRL:  result = a >> shamt;               // SRL/SRLI
-            OP_SRA:  result = $signed(a) >>> shamt;      // SRA/SRAI
-            OP_OR:   result = a | b;                    // OR/ORI
-            OP_AND:  result = a & b;                    // AND/ANDI
-            default: result = 32'b0;                    // 默认值
-        endcase
-    end
-
-    // 判断结果是否为0（用于BEQ/BNE等分支指令）
-    assign zero = (result == 32'b0);
-
 endmodule
 
 
@@ -208,59 +196,61 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
     input imm_en,
     //input jump_en,
     input load,//wire load=mem_op[3];
-    //input [6:0] opcode,
+    input [6:0] opcode,//用于分支指令
+    input [31:0] pc,
+    //input [2:0] func3,
     input [4:0] decode_rd,
+    input [4:0] rd_en,
     input [31:0] exdata,
     input [31:0] memdata,
 
     output stall,
     output [31:0] op1,
-    output [31:0] op2,
+    output [31:0] op2
     //output [4:0]alu_op
 );
 endmodule
 
 
 module exmemreg(
-    input clk,
-    input rst_n,
-    input [31:0] ex_result,
-    input [3:0] sel,
-    input [4:0] rd,
-    output read_en,
-    output write_en,
-    output wb_en,
-    output [31:0] result,
-    output [31:0] result_address,
-    output [4:0] rd
+    // 基础控制信号
+    input         clk,                  // 时钟
+    input         rst_n,                // 异步复位（低电平有效）
+    
+    // 来自执行阶段（EX）的数据
+    input  [31:0] result_i,             // ALU计算结果（所有指令）
+    input  [31:0] result_address_i,     // 访存地址（仅Load指令有效）
+    input  [4:0]  rd_i,                 // 目标寄存器编号
+    input         wb_en_i,              // 写回使能（来自控制单元）
+    input         read_en_i,            // Load指令标志（1=Load，0=其他）
+    
+    // 传递到访存阶段（MEM）的信号
+    output        wb_en_o,              // 写回使能
+    output [31:0] result_o,             // ALU结果或待写回数据
+    output        read_en_o,            // Load指令标志
+    output [31:0] result_address_o,     // 访存地址（仅Load有效）
+    output [4:0]  rd_o                  // 目标寄存器编号
 );
 endmodule
 
 module memwbreg(
-    input clk,
-    input rst_n,
-    input wb_en,//rd_en
-    input [4:0] rd,
-    input [31:0] datamem_dataout,
-    input [31:0] result_address,
-    output [31:0] regbag_w_data,
-    output [4:0] regbag_w_addr,
-    output regbag_w_en
+    // 基础控制信号
+    input         clk,              // 时钟
+    input         rst_n,            // 异步复位（低电平有效）
+    
+    // 来自访存阶段（MEM）的输入
+    input         wb_en,            // 写回使能（控制是否写回寄存器堆）
+    input  [4:0]  rd,               // 目标寄存器编号
+    input  [31:0] result,           // 待写回的数据（来自ALU或存储器）
+    
+    // 传递到写回阶段（WB）的输出
+    output [31:0] regbag_w_data,    // 写入寄存器堆的数据
+    output [4:0]  regbag_w_addr,    // 写入寄存器堆的地址
+    output        regbag_w_en       // 寄存器堆写使能
 );
 endmodule
 
-module predecode(
-    input 
-);
-endmodule
 
-module pred(
-    input predecode_en,
-    input predecode_addr,
-    output pc_jumpen,
-    output pc_jumpaddr
-);
-endmodule
 
 
 

@@ -6,7 +6,7 @@ module ifidreg(
     input feedforward_stall,
     input [31:0] instr_addr_i,
     output [31:0] decoder_instr,
-    output [31:0] instr_addr_o,
+    output [31:0] instr_addr_o
 );
 // 流水线寄存器（包含所有需要通过流水级的信号）
 reg [31:0] pipeline_reg;
