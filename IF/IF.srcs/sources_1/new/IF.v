@@ -20,23 +20,99 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 //README:为了代码的可读性与可维护性，我会尽可能地将大模块划分为几个小模块。同时为了不与spec文档产生过多冲突，我会尽量沿用spec文档中的变量名，并对新增的模块和变量予以注释说明
-module IF(
-
+module IF_top(
     //========== 时钟与复位 ==========//
-    input         clk,        // 全局时钟（上升沿触发）
-    input         rst_n,      // 异步低电平复位（0复位，1正常工作）
-    //========== 指令存储器接口 ==========//
-    output [31:0] instrmem_addr, // 指令存储器地址（4字节对齐，addr[1:0]=00）
-    input  [31:0] instr_data, // 指令存储器数据（32位）
-    //========== 分支预测器接口 ==========//
-    input         f_en,       // 分支预测使能（1表示预测跳转）
-    input  [31:0] f_addr,     // 预测跳转地址（来自分支预测器）
-    //========== 流水线控制 ==========//
-    input         flush,      // 冲刷信号（分支预测错误时置1）
-    input         blocking,   // 阻塞信号（数据冲突时置1）
-    //========== 输出 ==========//  
-    output reg [31:0] addr    // 当前PC值（按4字节对齐，addr[1:0]=00）
+    input         clk,                // 全局时钟（上升沿触发）
+    input         rst_n,              // 异步低电平复位（0复位，1正常工作）
+    input  [31:0] instr_data,         // 指令存储器数据（32位）
     
+    //========== 冒险控制 ==========//
+    input         data_hazard_stall,   // 数据冒险阻塞信号
+    input         control_hazard_stall,// 控制冒险阻塞信号
+    
+    //========== 分支预测接口 ==========//
+    input  wire        brunch_taken,   // 分支实际跳转结果（来自交付单元）
+    input  wire        update_en,      // 分支预测表更新使能
+    input  wire [31:0] target_addr,    // 分支实际目标地址（来自执行阶段）
+    
+    //========== 流水线控制 ==========//
+    input         flush,               // 冲刷信号（分支预测错误）
+    input  [31:0] checkpre_flush_addr, // 冲刷恢复地址
+    input         blocking,            // 全局阻塞信号
+    
+    //========== 输出 ==========//
+    output [31:0] pc                   // 当前PC值（4字节对齐）
+);
+
+    //========== 内部信号声明 ==========//
+    wire [31:0] new_PC_addr;          // 新PC地址
+    wire        new_addr_en;          // PC更新使能
+    wire        pred_f_en;            // 分支预测使能
+    wire        btb_hit;              // BTB命中信号
+    wire [31:0] predicted_target_addr;// BTB预测地址
+    wire        jxx, bxx;             // 预解码控制信号
+
+    //========== 模块实例化 ==========//
+    // PC寄存器模块
+    PC_reg pc_reg_inst (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .new_addr_en  (new_addr_en),
+        .new_PC_addr  (new_PC_addr),
+        .pc           (pc)
+    );
+
+    // PC多路选择器
+    PC_MUX pc_mux_inst (
+        .pc                   (pc),
+        .pred_f_en            (pred_f_en),
+        .pred_f_addr          (predicted_target_addr),  // 使用BTB预测地址
+        .btb_hit              (btb_hit),
+        .checkpre_flush        (flush),
+        .checkpre_flush_addr  (checkpre_flush_addr),
+        .new_PC_addr          (new_PC_addr)
+    );
+
+    // PC更新使能生成
+    PC_enable pc_enable_inst (
+        .data_hazard_stall    (data_hazard_stall),
+        .control_hazard_stall (control_hazard_stall),
+        .new_addr_en          (new_addr_en)
+    );
+
+    // 指令预解码器
+    predecode predecoder_inst (
+        .instr_data           (instr_data),
+        .jxx                  (jxx),
+        .bxx                  (bxx)
+    );
+
+    // 分支预测单元（BPU）
+    BPU bpu_inst (
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .jxx           (jxx),
+        .bxx           (bxx),
+        .pc            (pc),
+        .brunch_taken  (brunch_taken),
+        .update_en     (update_en),
+        .pred_f_en     (pred_f_en)
+    );
+
+    // 分支目标缓冲（BTB）
+    BTB #(
+        .BTB_SIZE      (16),
+        .ADDR_WIDTH    (32)
+    ) btb_inst (
+        .clk                  (clk),
+        .rst_n                (rst_n),
+        .jxx                  (jxx),
+        .bxx                  (bxx),
+        .pc                   (pc),
+        .target_addr          (target_addr),
+        .update_en            (update_en),
+        .predicted_target_addr(predicted_target_addr),
+        .btb_hit              (btb_hit)
     );
 endmodule
 
@@ -58,21 +134,22 @@ module PC_reg (                         //原PC模块//
     input         new_addr_en,       // 新地址使能（1表示新地址有效）
     input  [31:0] new_PC_addr,          // 新地址
     //========== 输出 ==========//
-    output reg [31:0] instrmem_addr    // 当前PC值（按4字节对齐，addr[1:0]=00）
+    output reg [31:0] pc    // 当前PC值（按4字节对齐，addr[1:0]=00）
 );
     always @(posedge clk) begin
         if(!rst_n) begin
-            instrmem_addr <= 32'h0000_0000; //复位时PC值为0
+            pc <= 32'h0000_0000; //复位时PC值为0
         end else if (new_addr_en) begin
-            instrmem_addr <= new_PC_addr; //新地址有效时更新PC值
+            pc <= new_PC_addr; //新地址有效时更新PC值
         end 
     end
 endmodule
 
 module PC_MUX(
-    input  [31:0] instrmem_addr,  //原先的PC值
+    input  [31:0] pc,  //原先的PC值
     input         pred_f_en,       // 分支预测使能（1表示预测跳转）
     input  [31:0] pred_f_addr,     // 预测跳转地址（来自分支预测器）
+    input         btb_hit,      // BTB命中信号（1表示命中）
     input         checkpre_flush,      // 冲刷信号（分支预测错误时置1）
     input  [31:0] checkpre_flush_addr,   // CHANGE：新增冲刷地址（分支预测错误时的PC值）
     output reg [31:0] new_PC_addr
@@ -80,10 +157,10 @@ module PC_MUX(
     always @(*) begin
         if (checkpre_flush) begin
            new_PC_addr = checkpre_flush_addr; //冲刷信号有效时使用冲刷地址
-        end else if (pred_f_en) begin
+        end else if (pred_f_en && btb_hit) begin
             new_PC_addr = pred_f_addr; //分支预测使能时使用预测地址
         end else begin
-            new_PC_addr = instrmem_addr + 4; //默认情况下PC值加4
+            new_PC_addr = pc + 4; //默认情况下PC值加4
         end
     end
 endmodule
@@ -91,18 +168,31 @@ endmodule
 //CHANGE:该模块用于产生PC_reg模块的new_addr_en信号,其中的input需要由数据相关性检测器和控制冒险检测器提供。为此需要特别注意可能产生冒险的地方。
 //NOTES:此处有两个需要由下级流水给出的信号
 module PC_enable(
-    input        predecode_stall,//predecode阶段的阻塞信号
     input        data_hazard_stall,//数据冒险的阻塞信号
     input        control_hazard_stall,//控制冒险的阻塞信号
     output       new_addr_en //新地址使能信号
 );
 
-assign new_addr_en = !predecode_stall && !data_hazard_stall && !control_hazard_stall; //当三个信号都为0时，new_addr_en为1
+assign new_addr_en = !data_hazard_stall && !control_hazard_stall; //当两个信号都为0时，new_addr_en为1
 endmodule
 
 module predecode(
-
+    input [31:0] instr_data,
+    output       jxx,
+    output       bxx
 );
+localparam OPCODE_JAL    = 7'b1101111;  // JAL指令
+localparam OPCODE_JALR   = 7'b1100111;  // JALR指令
+localparam OPCODE_BRANCH = 7'b1100011;   // 分支指令
+
+// ========================= 预解码逻辑 =========================
+wire is_jal    = (instr_data[6:0] == OPCODE_JAL);    // JAL指令
+wire is_jalr   = (instr_data[6:0] == OPCODE_JALR);   // JALR指令
+wire is_branch = (instr_data[6:0] == OPCODE_BRANCH); // 分支指令
+
+// 组合逻辑输出（立即识别指令类型）
+assign jxx = is_jal | is_jalr;   // 合并J型指令信号
+assign bxx = is_branch;          // 分支指令信号
 endmodule
 
 //CHANGE:原先的分支预测模块pred容易与predecode混淆，因此将其名称改为BPU（Branch Prediction Unit）
@@ -113,7 +203,7 @@ module BPU (
     input wire rst_n,
     input wire jxx,
     input wire bxx,
-    input wire [31:0] instrmem_addr,  // 指令地址
+    input wire [31:0] pc,  // 指令地址
     input wire brunch_taken,  // NOTES:此信号需要由交付单元给出。分支指令实际是否跳转，1表示跳转，0表示不跳转。
     input wire update_en,  // NOTES:此信号需要由交付单元给出。当分支指令完成时，update_en为1，表示需要更新预测表
     output reg pred_f_en  // 预测结果，1表示跳转，0表示不跳转
@@ -132,8 +222,8 @@ module BPU (
     // 计算索引
     wire [7:0] prediction_index;
     wire [7:0] selector_index;
-    assign prediction_index = instrmem_addr[7:0];
-    assign selector_index = instrmem_addr[15:8];
+    assign prediction_index = pc[7:0];
+    assign selector_index = pc[15:8];
 
     // 预测逻辑
     always @(*) begin
@@ -226,7 +316,7 @@ module BTB #(
     input wire rst_n,         // 异步复位信号，低电平有效，用于将BTB模块复位到初始状态
     input wire jxx,
     input wire bxx,
-    input wire [ADDR_WIDTH-1:0] instrmem_addr, // 分支指令的地址，用于查找和存储操作
+    input wire [ADDR_WIDTH-1:0] pc, // 分支指令的地址，用于查找和存储操作
     //NOTES:target_addr在执行阶段产生，为预测地址与实际地址不一致时，分支指令的实际跳转地址
     input wire [ADDR_WIDTH-1:0] target_addr, // 分支指令的目标地址，用于存储操作
     //NOTES:update_en 信号的产生:执行阶段。比较实际的分支目标地址和 BTB 预测的目标地址。若两者不一致，表明预测错误，需要更新 BTB 中的信息；若一致，则说明预测正确。
@@ -279,7 +369,7 @@ module BTB #(
                 // 遍历BTB的所有条目
                 for (i = 0; i < BTB_SIZE; i = i + 1) begin
                     // 检查当前条目是否有效且分支指令地址匹配
-                    if (valid[i] && btb_branch_addr[i] == instrmem_addr) begin
+                    if (valid[i] && btb_branch_addr[i] == pc) begin
                         // 命中，将命中信号置为1
                         btb_hit <= 1'b1;
                         // 输出预测的目标地址
@@ -324,7 +414,7 @@ module BTB #(
                         end
                     end
                     // 替换LRU条目
-                    btb_branch_addr[lru_index] <= instrmem_addr;
+                    btb_branch_addr[lru_index] <= pc;
                     btb_target_addr[lru_index] <= target_addr;
                     valid[lru_index] <= 1'b1;
                     // 更新LRU计数器
@@ -337,7 +427,7 @@ module BTB #(
                     end
                 end else begin
                     // 使用空闲条目存储新的分支信息
-                    btb_branch_addr[empty_index] <= instrmem_addr;
+                    btb_branch_addr[empty_index] <= pc;
                     btb_target_addr[empty_index] <= target_addr;
                     valid[empty_index] <= 1'b1;
                     // 更新LRU计数器
@@ -356,7 +446,7 @@ module BTB #(
                 // 如果预测错误，更新目标地址
                 if (btb_hit && btb_target_addr[i] != target_addr) begin
                     for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                        if (valid[i] && btb_branch_addr[i] == instrmem_addr) begin
+                        if (valid[i] && btb_branch_addr[i] == pc) begin
                             btb_target_addr[i] <= target_addr;
                         end
                     end
