@@ -230,6 +230,8 @@ module cputop(
         .pc_i(idex_instr_addr),
         .rs1_i(decoder_rs1),
         .rs2_i(decoder_rs2),
+        //.exdata_i(exdata),
+        //.memdata_i(memdata),
 
         .op_o(idex_op),
         .funct7_o(idex_funct7),
@@ -247,6 +249,7 @@ module cputop(
         .pc_o(idex_pc),
         .rs1_o(idex_rs1),
         .rs2_o(idex_rs2)
+        //.exdata_o(exdata)
     );
 
     // ---------------------- EX模块 ----------------------

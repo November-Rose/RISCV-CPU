@@ -22,6 +22,8 @@ module idexreg(
     input [31:0] pc_i,
     input [4:0] rs1_i,
     input [4:0] rs2_i,
+    //input [31:0] exdata_i,
+    //input [31:0] memdata_i,
 
     output [6:0] op_o,
     output [7:0] funct7_o,
@@ -39,6 +41,8 @@ module idexreg(
     output [31:0] pc_o,
     output [4:0] rs1_o,
     output [4:0] rs2_o
+    //output [31:0] exdata_o,
+    //output [31:0] memdata_o
 );
 
 // 流水线寄存器（包含所有需要通过流水级的信号）
