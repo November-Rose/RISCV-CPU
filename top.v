@@ -17,11 +17,10 @@ module cputop(
 
     // ====================== 信号声明 =====================
     // PC模块信号
-    wire        pre_en;
-    wire [31:0] pre_pc_next;
-    wire        flush;
-    wire        stall;
-
+    wire         stall;   // 阻塞信号
+    wire        brunch_taken;   // NOTES:需要添加，分支实际跳转结果（来自交付单元）
+    wire        update_en;      // NOTES:需要添加,分支指令执行完毕后给出
+    wire        flush;               // 冲刷信号（分支预测错误）
     // IF/ID寄存器信号
     wire [31:0] ifid_instr;
     wire [31:0] ifid_instr_addr;
@@ -85,17 +84,18 @@ module cputop(
 
     // ====================== 模块实例化 ======================
 
-    // ---------------------- PC ----------------------
-    pc pc_inst (
+    // ---------------------- IF ----------------------
+    IF_top IF_top_inst(
         .clk(clk),
         .rst_n(rst_n),
-        .pred_f_en(1'b0),          // 分支预测暂未实现
-        .pred_f_addr(32'h0),       // 分支预测地址
-        .checkpre_flush(flush),     // 来自EX的分支误预测冲刷
-        .feedforward_stall(stall), // 来自EX的数据冲突阻塞
-        .instrmem_addr(instrmem_instr_addr)
+        .instr_data(instrmem_instr_data),
+        .stall(stall),
+        .brunch_taken(brunch_taken),
+        .update_en(update_en),
+        .flush(flush),
+        .checkpre_flush_addr(ex_correctpc), // 预测错误时，使用的PC地址
+        .pc(instrmem_instr_addr)
     );
-
     
 
     // ---------------------- IF/ID寄存器 ----------------------
@@ -218,7 +218,9 @@ module cputop(
         .result_address(ex_result_addr),
         .stall(stall),
         .flush(flush),
-        .correctpc(ex_correctpc)
+        .correctpc(ex_correctpc),
+        .update_en(update_en), // 更新信号
+        .brunch_taken(brunch_taken)
     );
 
     // ---------------------- EX/MEM寄存器 ----------------------

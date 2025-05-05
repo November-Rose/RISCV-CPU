@@ -25,7 +25,9 @@ module ex (
     output [31:0] result_address,//仅仅用于访存load与store语句
     output stall,
     output flush,
-    output [31:0] correctpc
+    output [31:0] correctpc,
+    output brunch_taken,
+    output update_en
 );
 
     // ALU操作码定义（与alu模块一致）
@@ -167,4 +169,6 @@ end
     assign correctpc=correctpcreg;
     assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
     assign exresult=(op == 7'b0100011)?data2:alu_result;
+    assign update_en=jump_en;
+    assign brunch_taken=jumpflag;
 endmodule

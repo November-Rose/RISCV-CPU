@@ -27,18 +27,15 @@ module IF_top(
     input  [31:0] instr_data,         // 指令存储器数据（32位）
     
     //========== 冒险控制 ==========//
-    input         data_hazard_stall,   // 数据冒险阻塞信号
-    input         control_hazard_stall,// 控制冒险阻塞信号
+    input         stall,
     
     //========== 分支预测接口 ==========//
     input  wire        brunch_taken,   // 分支实际跳转结果（来自交付单元）
     input  wire        update_en,      // 分支预测表更新使能
-    input  wire [31:0] target_addr,    // 分支实际目标地址（来自执行阶段）
     
     //========== 流水线控制 ==========//
     input         flush,               // 冲刷信号（分支预测错误）
     input  [31:0] checkpre_flush_addr, // 冲刷恢复地址
-    input         blocking,            // 全局阻塞信号
     
     //========== 输出 ==========//
     output [31:0] pc                   // 当前PC值（4字节对齐）
@@ -75,8 +72,8 @@ module IF_top(
 
     // PC更新使能生成
     PC_enable pc_enable_inst (
-        .data_hazard_stall    (data_hazard_stall),
-        .control_hazard_stall (control_hazard_stall),
+        .data_hazard_stall    (stall),
+        .control_hazard_stall (stall),
         .new_addr_en          (new_addr_en)
     );
 
@@ -109,7 +106,7 @@ module IF_top(
         .jxx                  (jxx),
         .bxx                  (bxx),
         .pc                   (pc),
-        .target_addr          (target_addr),
+        .target_addr          (checkpre_flush_addr),
         .update_en            (update_en),
         .predicted_target_addr(predicted_target_addr),
         .btb_hit              (btb_hit)
