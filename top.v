@@ -1,3 +1,108 @@
+`timescale 1ns / 1ps
+
+module myCPU(
+    input         w_clk_rst,     // 高电平复位
+    input         w_cpu_clk,    
+    // IROM接口
+    output [31:0] pc,
+    input  [31:0] instruction,
+    // 外设接口
+    output [31:0] perip_addr,
+    output        perip_wen,
+    output [1:0]  perip_mask,
+    output [31:0] perip_wdata,
+    input  [31:0] perip_rdata    // 从外设读取的原始数据（未扩展）
+);
+
+    // 操作码定义
+    localparam LB   = 3'b000;
+    localparam LH   = 3'b001;
+    localparam LW   = 3'b010;
+    localparam LBU  = 3'b100;
+    localparam LHU  = 3'b101;
+    localparam SB   = 3'b000;
+    localparam SH   = 3'b001;
+    localparam SW   = 3'b010;
+
+    wire [2:0] datamem_op;
+    reg [1:0] perip_mask_reg;
+    wire [31:0] datamem_datar;  // 符号扩展后的数据
+
+    // 实例化cputop
+    cputop u_cputop (
+        .clk                 (w_cpu_clk),
+        .rst_n               (~w_clk_rst),
+        .instrmem_instr_addr (pc),
+        .instrmem_instr_data (instruction),
+        .datamem_datar       (datamem_datar),  // 使用扩展后的数据
+        .datamem_w_en        (perip_wen),
+        .datamem_addr        (perip_addr),
+        .datamem_op          (datamem_op),
+        .datamem_dataw       (perip_wdata)
+    );
+
+    // 操作码到字节掩码转换
+    always @(*) begin
+        case (datamem_op)
+            SB:   perip_mask_reg = 2'b00;
+            SH:   perip_mask_reg = 2'b01;
+            SW:   perip_mask_reg = 2'b11;
+            LB:   perip_mask_reg = 2'b00;
+            LH:   perip_mask_reg = 2'b01;
+            LW:   perip_mask_reg = 2'b11;
+            LBU:  perip_mask_reg = 2'b00;
+            LHU:  perip_mask_reg = 2'b01;
+            default: perip_mask_reg = 2'b11;
+        endcase
+    end
+    assign perip_mask = perip_mask_reg;
+
+    // -------------------------------
+    // 新增：符号/零扩展处理逻辑
+    // -------------------------------
+    reg [31:0] datamem_datar_reg;
+    always @(*) begin
+        case (datamem_op)
+            // 有符号扩展
+            LB: begin
+                case (perip_addr[1:0])
+                    2'b00: datamem_datar_reg = {{24{perip_rdata[7]}},  perip_rdata[7:0]};
+                    2'b01: datamem_datar_reg = {{24{perip_rdata[15]}}, perip_rdata[15:8]};
+                    2'b10: datamem_datar_reg = {{24{perip_rdata[23]}}, perip_rdata[23:16]};
+                    2'b11: datamem_datar_reg = {{24{perip_rdata[31]}}, perip_rdata[31:24]};
+                endcase
+            end
+            LH: begin
+                case (perip_addr[1])
+                    1'b0: datamem_datar_reg = {{16{perip_rdata[15]}}, perip_rdata[15:0]};
+                    1'b1: datamem_datar_reg = {{16{perip_rdata[31]}}, perip_rdata[31:16]};
+                endcase
+            end
+            // 无符号扩展
+            LBU: begin
+                case (perip_addr[1:0])
+                    2'b00: datamem_datar_reg = {24'b0, perip_rdata[7:0]};
+                    2'b01: datamem_datar_reg = {24'b0, perip_rdata[15:8]};
+                    2'b10: datamem_datar_reg = {24'b0, perip_rdata[23:16]};
+                    2'b11: datamem_datar_reg = {24'b0, perip_rdata[31:24]};
+                endcase
+            end
+            LHU: begin
+                case (perip_addr[1])
+                    1'b0: datamem_datar_reg = {16'b0, perip_rdata[15:0]};
+                    1'b1: datamem_datar_reg = {16'b0, perip_rdata[31:16]};
+                endcase
+            end
+            // 默认情况（LW和其他指令）
+            default: datamem_datar_reg = perip_rdata;
+        endcase
+    end
+    assign datamem_datar = datamem_datar_reg;
+
+endmodule
+
+//解决了两个不兼容问题，1符号位扩展问题，2op从3位变成2位
+
 module cputop(
     input         clk,
     input         rst_n,
@@ -6,12 +111,14 @@ module cputop(
     input  [31:0] instrmem_instr_data,
 
     input  [31:0] datamem_datar,
-    output        datamem_r_en,  //与读有关的都来自于exmemreg，与写有关的都来自idexreg
-    output        datamem_w_en,
-    output [31:0] datamem_addr_r,
-    output [31:0] datamem_addr_w,
-    output [2:0]  datamem_op_r,
-    output [2:0]  datamem_op_w,
+    //output        datamem_r_en,  
+    output        datamem_w_en,//读使能自动默认
+    //output [31:0] datamem_addr_r,
+    //output [31:0] datamem_addr_w,
+    output [31:0] datamem_addr,
+    //output [2:0]  datamem_op_r,
+    //output [2:0]  datamem_op_w,
+    output [2:0]  datamem_op,
     output [31:0] datamem_dataw
 );
 
@@ -68,13 +175,18 @@ module cputop(
     wire [31:0] ex_result_addr;
     wire [31:0] ex_correctpc;
 
+    assign datamem_op=idex_mem_op[2:0];
+    assign datamem_w_en=idex_mem_op[3];
+    assign datamem_addr=ex_result_addr;
+    assign datamem_dataw=idex_data2;
+
     // EX/MEM寄存器信号
     wire        exmem_wb_en;
     wire [31:0] exmem_result;
     wire        exmem_read_en;
-    wire [31:0] exmem_result_addr;
+    //wire [31:0] exmem_result_addr;
     wire [4:0]  exmem_rd;
-    wire [2:0]  exmem_op;
+    //wire [2:0]  exmem_op;
     
 
     // MEM/WB寄存器信号
@@ -229,27 +341,27 @@ module cputop(
         .rst_n(rst_n),
 
         .result_i(ex_result),
-        .result_address_i(ex_result_addr),
+        //.result_address_i(ex_result_addr),
         .rd_i(idex_rd),
         .wb_en_i(idex_rd_en),
         .read_en_i(idex_mem_op[4]), // Load指令标志
-        .mem_op_i(idex_mem_op[2:0]),
+        //.mem_op_i(idex_mem_op[2:0]),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
         .read_en_o(exmem_read_en),//a
-        .result_address_o(exmem_result_addr),//a
-        .mem_op_o(exmem_op),//a,a信号为了得到datamem_datar
+        //.result_address_o(exmem_result_addr),//a
+        //.mem_op_o(exmem_op),//a,a信号为了得到datamem_datar
         .rd_o(exmem_rd)
     );
-    assign datamem_op_r=exmem_op;
-    assign datamem_r_en=exmem_read_en;
-    assign datamem_addr_r=exmem_result_addr;
+    // assign datamem_op_r=exmem_op;
+    // assign datamem_r_en=exmem_read_en;
+    // assign datamem_addr_r=exmem_result_addr;
 
-    assign datamem_op_w=idex_mem_op[2:0];
-    assign datamem_w_en=idex_mem_op[3];//作为同步写入，为了保持时序一致性，需要从idex里面取这个
-    assign datamem_addr_w=ex_result_addr;
-    assign datamem_dataw = idex_data2;  // 写入数据来自寄存器堆读取的数据2
+    // assign datamem_op_w=idex_mem_op[2:0];
+    // assign datamem_w_en=idex_mem_op[3];//作为同步写入，为了保持时序一致性，需要从idex里面取这个
+    // assign datamem_addr_w=ex_result_addr;
+    // assign datamem_dataw = idex_data2;  // 写入数据来自寄存器堆读取的数据2
 
     
 
@@ -268,7 +380,7 @@ module cputop(
     );
 
 endmodule
-
+/*
 module top(
     input clk,
     input rst_n
@@ -326,4 +438,4 @@ module top(
         .instr_addr(instrmem_instr_addr),
         .instr_data(instrmem_instr_data)
     );
-endmodule
+endmodule*/
