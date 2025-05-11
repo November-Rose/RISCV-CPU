@@ -1,4 +1,4 @@
-module ex (
+module ex (//前馈要改关于flag
     input clk,//仅仅为了串行存储rd，不会打破流水线时序
     input rst_n,
     input en1,
@@ -20,6 +20,7 @@ module ex (
     input [31:0] memdata,
     input [31:0] pc,//这条指令的pc
     input [31:0] nextpc,//下条指令的pc
+    input s_flag,
 
     output [31:0] exresult,
     output [31:0] result_address,//仅仅用于访存load与store语句
@@ -47,6 +48,7 @@ module ex (
     wire [31:0] alu_result;
     wire [31:0] op1, op2;
     wire zero;
+    wire stall1;
     
    // 根据opcode和funct生成alu_op的逻辑
 always @(*) begin
@@ -125,7 +127,7 @@ end
         .rd_en(rd_en),
         .exdata(exdata),
         .memdata(memdata),
-        .stall(stall),
+        .stall(stall1),
         .op1(op1),
         .op2(op2)
     );
@@ -162,10 +164,11 @@ end
             correctpcreg=alu_result;
         end
         else begin
-            correctpcreg=31'd0;
+            correctpcreg=pc+4;
         end
     end
-    assign flush=jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0;
+    assign stall=s_flag?1'b0:stall1;
+    assign flush=s_flag?1'b0:(jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0);
     assign correctpc=correctpcreg;
     assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
     assign exresult=(op == 7'b0100011)?data2:alu_result;
