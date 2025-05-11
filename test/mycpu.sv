@@ -46,8 +46,8 @@ module myCPU (
 
     // 实例化cputop
     cputop u_cputop (
-        .clk                 (w_cpu_clk),
-        .rst_n               (~w_clk_rst),
+        .clk                 (cpu_clk),  //NOTES:疑似bug，w_cpu_clk->cpu_clk,下同
+        .rst_n               (~cpu_rst),
         .instrmem_instr_addr (pc),
         .instrmem_instr_data (instruction),
         .datamem_datar       (datamem_datar),  // 使用扩展后的数据
