@@ -1,4 +1,4 @@
-module ex (
+module ex (//前馈要改关于flag
     input clk,//仅仅为了串行存储rd，不会打破流水线时序
     input rst_n,
     input en1,

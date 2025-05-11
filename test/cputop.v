@@ -101,10 +101,10 @@ module cputop(
     
     
     // Debug Interface 
-    reg wb_pc_reg;
-    reg mem_pc_reg;
+    reg [31:0] wb_pc_reg;
+    reg [31:0] mem_pc_reg;
     //reg debug_wb_have_inst_reg;
-    assign debug_wb_have_inst = memwb_flag;
+    assign debug_wb_have_inst = ~memwb_flag;
     assign debug_wb_pc        = wb_pc_reg;
     assign debug_wb_ena       = memwb_wb_en;
     assign debug_wb_reg       = memwb_rd;
@@ -207,7 +207,7 @@ module cputop(
         .funct3_i(decoder_funct3),
         .mem_op_i(decoder_mem_op),
         .jump_en_i(decoder_jump_en),
-        .pc_i(idex_instr_addr),
+        .pc_i(ifid_instr_addr),
         .rs1_i(decoder_rs1),
         .rs2_i(decoder_rs2),
 
@@ -367,7 +367,7 @@ module decoder (
                  is_jtype ? j_imm : 32'b0;
     assign jump_en = (op == 7'b1100111) || (op == 7'b1101111) || (op == 7'b1100011); // JALR/JAL/Branch
     assign imm_en  = is_itype || is_stype || is_btype || is_utype || is_jtype;
-    assign rd_en   = !is_stype && !is_btype && (rd_addr != 5'b0); // STORE和BRANCH不写rd
+    assign rd_en   = !is_stype && !is_btype; // STORE和BRANCH不写rd
     assign rs1_en  = !is_utype && !is_jtype && (rs1_addr != 5'b0); // LUI/AUIPC/JAL不用rs1
     assign rs2_en  = is_rtype || is_stype || is_btype; // 仅这三类指令需要rs2
 
@@ -1267,13 +1267,13 @@ always @(posedge clk or negedge rst_n) begin
         result_reg <= 32'h0;
         rd_reg     <= 5'h0;
         wb_en_reg  <= 1'b0;
-        s_flag_reg <= 1'b0;
+        s_flag_reg <= 1'b1;
     end
     else begin
         // 时钟上升沿锁存输入信号
         result_reg <= result;
         rd_reg     <= rd;
-        wb_en_reg  <= wb_en&&s_flag_i;
+        wb_en_reg  <= wb_en&&~s_flag_i;
         s_flag_reg <= s_flag_i;
     end
 end
@@ -1329,7 +1329,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<= 1'b0;
         update_en_reg<= 1'b0;
         brunch_taken_reg<= 1'b0;
-        s_flag_reg<=1'b0;
+        s_flag_reg<=1'b1;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1377,7 +1377,7 @@ module ifidreg(
             // 异步复位：清空流水线（输出NOP指令和0地址）
             pipeline_reg <= 32'h00000013;  // ADDI x0, x0, 0 (NOP)
             addr_reg <= 32'd0;
-            s_flag_reg <=1'b0;
+            s_flag_reg <=1'b1;
         end
         else begin
             s_flag_reg<=checkpre_flush;
@@ -1494,7 +1494,7 @@ always @(posedge clk or negedge rst_n) begin
         mem_op_reg <= 5'h0;
         jump_en_reg <= 1'b0;
         pc_reg <= 32'h0;
-        s_flag_reg<=1'b0;
+        s_flag_reg<=1'b1;
     end
     else begin
         s_flag_reg<=s_flag_i||checkpre_flush;

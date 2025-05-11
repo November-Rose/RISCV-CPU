@@ -58,7 +58,7 @@ module decoder (
                  is_jtype ? j_imm : 32'b0;
     assign jump_en = (op == 7'b1100111) || (op == 7'b1101111) || (op == 7'b1100011); // JALR/JAL/Branch
     assign imm_en  = is_itype || is_stype || is_btype || is_utype || is_jtype;
-    assign rd_en   = !is_stype && !is_btype && (rd_addr != 5'b0); // STORE和BRANCH不写rd
+    assign rd_en   = !is_stype && !is_btype ; // STORE和BRANCH不写rd
     assign rs1_en  = !is_utype && !is_jtype && (rs1_addr != 5'b0); // LUI/AUIPC/JAL不用rs1
     assign rs2_en  = is_rtype || is_stype || is_btype; // 仅这三类指令需要rs2
 

@@ -22,7 +22,7 @@ module ifidreg(
             // 异步复位：清空流水线（输出NOP指令和0地址）
             pipeline_reg <= 32'h00000013;  // ADDI x0, x0, 0 (NOP)
             addr_reg <= 32'd0;
-            s_flag_reg <=1'b0;
+            s_flag_reg <=1'b1;
         end
         else begin
             s_flag_reg<=checkpre_flush;

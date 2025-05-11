@@ -83,7 +83,7 @@ always @(posedge clk or negedge rst_n) begin
         mem_op_reg <= 5'h0;
         jump_en_reg <= 1'b0;
         pc_reg <= 32'h0;
-        s_flag_reg<=1'b0;
+        s_flag_reg<=1'b1;
     end
     else begin
         s_flag_reg<=s_flag_i||checkpre_flush;

@@ -28,13 +28,13 @@ always @(posedge clk or negedge rst_n) begin
         result_reg <= 32'h0;
         rd_reg     <= 5'h0;
         wb_en_reg  <= 1'b0;
-        s_flag_reg <= 1'b0;
+        s_flag_reg <= 1'b1;
     end
     else begin
         // 时钟上升沿锁存输入信号
         result_reg <= result;
         rd_reg     <= rd;
-        wb_en_reg  <= wb_en&&s_flag_i;
+        wb_en_reg  <= wb_en&&~s_flag_i;
         s_flag_reg <= s_flag_i;
     end
 end

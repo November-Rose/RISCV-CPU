@@ -41,7 +41,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<= 1'b0;
         update_en_reg<= 1'b0;
         brunch_taken_reg<= 1'b0;
-        s_flag_reg<=1'b0;
+        s_flag_reg<=1'b1;
     end
     else begin
         // 时钟上升沿锁存输入信号
