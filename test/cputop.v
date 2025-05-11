@@ -245,7 +245,7 @@ module cputop(
         .exdata(exmem_result),        // 前递数据（来自EX阶段）
         .memdata(memwb_result),     // 前递数据（来自MEM阶段）
         .pc(idex_pc),
-        .nextpc(instrmem_instr_addr),
+        .nextpc(instrmem_instr_addr),   //NOTES:需要连接if阶段的new addr
 
         .exresult(ex_result),
         .result_address(ex_result_addr),
