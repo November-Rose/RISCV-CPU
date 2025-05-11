@@ -1,18 +1,34 @@
-`timescale 1ns / 1ps
+module myCPU (
+    input  logic         cpu_rst,
+    input  logic         cpu_clk,
 
-module myCPU(
-    input         w_clk_rst,     // 高电平复位
-    input         w_cpu_clk,    
+    // Interface to IROM
     // IROM接口
     output [31:0] pc,
     input  [31:0] instruction,
+    // Interface to DRAM
     // 外设接口
     output [31:0] perip_addr,
     output        perip_wen,
     output [1:0]  perip_mask,
     output [31:0] perip_wdata,
-    input  [31:0] perip_rdata    // 从外设读取的原始数据（未扩展）
+    input  [31:0] perip_rdata,    // 从外设读取的原始数据（未扩展）
+
+    output wire        debug_wb_have_inst,   // WB阶段是否有指令 (对单周期CPU，可在复位后恒为1)
+    output wire [31:0] debug_wb_pc,          // WB阶段的PC (若wb_have_inst=0，此项可为任意值)
+    output wire        debug_wb_ena,         // WB阶段的寄存器写使能 (若wb_have_inst=0，此项可为任意值)
+    output wire [ 4:0] debug_wb_reg,         // WB阶段写入的寄存器号 (若wb_ena或wb_have_inst=0，此项可为任意值)
+    output wire [31:0] debug_wb_value        // WB阶段写入寄存器的值 (若wb_ena或wb_have_inst=0，此项可为任意值)
 );
+
+    // TODO: 完成你自己的单周期CPU设计
+    
+  /*  // Debug Interface
+    assign debug_wb_have_inst = ;
+    assign debug_wb_pc        = ;
+    assign debug_wb_ena       = ;
+    assign debug_wb_reg       = ;
+    assign debug_wb_value     = ;*/
 
     // 操作码定义
     localparam LB   = 3'b000;
@@ -30,15 +46,20 @@ module myCPU(
 
     // 实例化cputop
     cputop u_cputop (
-        .clk                 (w_cpu_clk),
-        .rst_n               (~w_clk_rst),
+        .clk                 (cpu_clk),  //NOTES:疑似bug，w_cpu_clk->cpu_clk,下同
+        .rst_n               (~cpu_rst),
         .instrmem_instr_addr (pc),
         .instrmem_instr_data (instruction),
         .datamem_datar       (datamem_datar),  // 使用扩展后的数据
         .datamem_w_en        (perip_wen),
         .datamem_addr        (perip_addr),
         .datamem_op          (datamem_op),
-        .datamem_dataw       (perip_wdata)
+        .datamem_dataw       (perip_wdata),
+        .debug_wb_have_inst  (debug_wb_have_inst),
+        .debug_wb_pc(debug_wb_pc),
+        .debug_wb_ena(debug_wb_ena),
+        .debug_wb_reg(debug_wb_reg),
+        .debug_wb_value(debug_wb_value)
     );
 
     // 操作码到字节掩码转换
@@ -98,8 +119,9 @@ module myCPU(
         endcase
     end
     assign datamem_datar = datamem_datar_reg;
-
+    
 endmodule
+
 
 //解决了两个不兼容问题，1符号位扩展问题，2op从3位变成2位
 
@@ -110,24 +132,27 @@ module cputop(
     output [31:0] instrmem_instr_addr,
     input  [31:0] instrmem_instr_data,
 
-    input  [31:0] datamem_datar,
-    //output        datamem_r_en,  
+    input  [31:0] datamem_datar, 
     output        datamem_w_en,//读使能自动默认
-    //output [31:0] datamem_addr_r,
-    //output [31:0] datamem_addr_w,
     output [31:0] datamem_addr,
-    //output [2:0]  datamem_op_r,
-    //output [2:0]  datamem_op_w,
     output [2:0]  datamem_op,
-    output [31:0] datamem_dataw
-);
+    output [31:0] datamem_dataw,
 
-    // ====================== 信号声明 =====================
+    output wire        debug_wb_have_inst,   // WB阶段是否有指令 (对单周期CPU，可在复位后恒为1)
+    output wire [31:0] debug_wb_pc,          // WB阶段的PC (若wb_have_inst=0，此项可为任意值)
+    output wire        debug_wb_ena,         // WB阶段的寄存器写使能 (若wb_have_inst=0，此项可为任意值)
+    output wire [ 4:0] debug_wb_reg,         // WB阶段写入的寄存器号 (若wb_ena或wb_have_inst=0，此项可为任意值)
+    output wire [31:0] debug_wb_value        // WB阶段写入寄存器的值 (若wb_ena或wb_have_inst=0，此项可为任意值)
+);
+    
+     // ====================== 信号声明 =====================
     // PC模块信号
     wire         stall;   // 阻塞信号
     wire        brunch_taken;   // NOTES:需要添加，分支实际跳转结果（来自交付单元）
     wire        update_en;      // NOTES:需要添加,分支指令执行完毕后给出
     wire        flush;               // 冲刷信号（分支预测错误）
+    wire        update_en_o;
+    wire        brunch_taken_o;      //update_en_o和brunch_taken_o应该从寄存器中获得
     // IF/ID寄存器信号
     wire [31:0] ifid_instr;
     wire [31:0] ifid_instr_addr;
@@ -180,7 +205,7 @@ module cputop(
     assign datamem_addr=ex_result_addr;
     assign datamem_dataw=idex_data2;
 
-    // EX/MEM寄存器信号
+     // EX/MEM寄存器信号
     wire        exmem_wb_en;
     wire [31:0] exmem_result;
     wire        exmem_read_en;
@@ -188,11 +213,30 @@ module cputop(
     wire [4:0]  exmem_rd;
     //wire [2:0]  exmem_op;
     
-
     // MEM/WB寄存器信号
     wire        memwb_wb_en;
     wire [31:0] memwb_result;
     wire [4:0]  memwb_rd;
+    
+    
+    // Debug Interface 
+    reg wb_pc;
+    reg mem_pc;
+    assign debug_wb_have_inst = memwb_wb_en;
+    assign debug_wb_pc        = wb_pc;
+    assign debug_wb_ena       = memwb_wb_en;
+    assign debug_wb_reg       = memwb_rd;
+    assign debug_wb_value     = memwb_result;
+    always@(posedge clk or negedge rst_n) begin
+        if(~rst_n) begin
+            wb_pc<=32'b0;
+            mem_pc<=32'b0;
+        end
+        else begin
+            mem_pc<=idex_jump_en?ex_correctpc:idex_pc;
+            wb_pc<=mem_pc;
+        end
+    end
 
     // ====================== 模块实例化 ======================
 
@@ -202,8 +246,8 @@ module cputop(
         .rst_n(rst_n),
         .instr_data(instrmem_instr_data),
         .stall(stall),
-        .brunch_taken(brunch_taken),
-        .update_en(update_en),
+        .brunch_taken(brunch_taken_o),
+        .update_en(update_en_o),
         .flush(flush),
         .checkpre_flush_addr(ex_correctpc), // 预测错误时，使用的PC地址
         .pc(instrmem_instr_addr)
@@ -225,7 +269,7 @@ module cputop(
     // ---------------------- 译码器 ----------------------
     decoder decoder_inst (
         .instr(ifid_instr),
-        .instr_addr_i(ifid_instr_addr),
+        //.instr_addr_i(ifid_instr_addr),
         .imm(decoder_imm),
         .imm_en(decoder_imm_en),
         .op(decoder_op),
@@ -233,7 +277,7 @@ module cputop(
         .funct3(decoder_funct3),
         .rd_addr(decoder_rd),
         .rd_en(decoder_rd_en),
-        .instr_addr_o(idex_instr_addr),          
+        //.instr_addr_o(idex_instr_addr),          
         .mem_op(decoder_mem_op),
         .jump_en(decoder_jump_en),
         .rs1_addr(decoder_rs1),
@@ -324,7 +368,7 @@ module cputop(
         .exdata(exmem_result),        // 前递数据（来自EX阶段）
         .memdata(memwb_result),     // 前递数据（来自MEM阶段）
         .pc(idex_pc),
-        .nextpc(instrmem_instr_addr),
+        .nextpc(instrmem_instr_addr),   //NOTES:需要连接if阶段的new addr
 
         .exresult(ex_result),
         .result_address(ex_result_addr),
@@ -346,13 +390,17 @@ module cputop(
         .wb_en_i(idex_rd_en),
         .read_en_i(idex_mem_op[4]), // Load指令标志
         //.mem_op_i(idex_mem_op[2:0]),
+        .update_en_i(update_en),
+        .brunch_taken_i(brunch_taken),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
         .read_en_o(exmem_read_en),//a
         //.result_address_o(exmem_result_addr),//a
         //.mem_op_o(exmem_op),//a,a信号为了得到datamem_datar
-        .rd_o(exmem_rd)
+        .rd_o(exmem_rd),
+        .update_en_o(update_en_o),
+        .brunch_taken_o(brunch_taken_o)
     );
     // assign datamem_op_r=exmem_op;
     // assign datamem_r_en=exmem_read_en;
@@ -1383,12 +1431,16 @@ module exmemreg(
     input  [4:0]  rd_i,         // 目标寄存器编号
     input         wb_en_i,      // 写回使能
     input         read_en_i,
+    input         update_en_i,
+    input         brunch_taken_i,
     
     // 传递到访存阶段（MEM）的信号
     output        wb_en_o,      // 写回使能
     output [31:0] result_o,    // ALU结果
     output [4:0]  rd_o,          // 目标寄存器编号
-    output        read_en_o
+    output        read_en_o,
+    output         update_en_o,
+    output         brunch_taken_o
 );
 
 // ===== 寄存器声明 =====
@@ -1396,6 +1448,8 @@ reg [31:0] result_reg;    // ALU结果寄存器
 reg [4:0]  rd_reg;        // 目标寄存器编号寄存器
 reg        wb_en_reg;     // 写回使能寄存器
 reg        read_en_reg;
+reg        update_en_reg;
+reg        brunch_taken_reg;
 
 // ===== 时序逻辑 =====
 always @(posedge clk or negedge rst_n) begin
@@ -1405,6 +1459,8 @@ always @(posedge clk or negedge rst_n) begin
         rd_reg     <= 5'h0;
         wb_en_reg  <= 1'b0;
         read_en_reg<= 1'b0;
+        update_en_reg<= 1'b0;
+        brunch_taken_reg<= 1'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1412,6 +1468,8 @@ always @(posedge clk or negedge rst_n) begin
         rd_reg     <= rd_i;
         wb_en_reg  <= wb_en_i;
         read_en_reg<=read_en_i;
+        update_en_reg<=update_en_i;
+        brunch_taken_reg<=brunch_taken_i;
     end
 end
 
@@ -1420,7 +1478,8 @@ assign result_o = result_reg;
 assign rd_o     = rd_reg;
 assign wb_en_o  = wb_en_reg;
 assign read_en_o= read_en_reg;
-
+assign update_en_o=update_en_reg;
+assign brunch_taken_o=brunch_taken_reg;
 endmodule
 
 module ifidreg(
