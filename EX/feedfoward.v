@@ -46,7 +46,7 @@ begin
     end
 end
 //stall产生
-assign stall=load&(flag[1]|flag[0]);
+assign stall=load&(flag[1]|flag[0]);  //NOTES: 有bug，会堵住
 //5选2决定op1，op2
 reg [31:0] op1reg;
 reg [31:0] op2reg;
