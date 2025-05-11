@@ -22,9 +22,9 @@ module cputop(
     output wire [31:0] debug_wb_value        // WB阶段写入寄存器的值 (若wb_ena或wb_have_inst=0，此项可为任意值)
 );
     
-     // ====================== 信号声明 =====================
+     // ====================== 信号声明 =====================寄存器输入端信号来源于前面的输出，输出端命名为寄存器信号
     // PC模块信号
-    wire         stall;   // 阻塞信号
+    wire        stall;     // 阻塞信号
     wire        brunch_taken;   // NOTES:需要添加，分支实际跳转结果（来自交付单元）
     wire        update_en;      // NOTES:需要添加,分支指令执行完毕后给出
     wire        flush;               // 冲刷信号（分支预测错误）
@@ -33,6 +33,7 @@ module cputop(
     // IF/ID寄存器信号
     wire [31:0] ifid_instr;
     wire [31:0] ifid_instr_addr;
+    wire ifid_s_flag;
 
     // 译码器信号
     wire [31:0] decoder_imm;
@@ -71,11 +72,14 @@ module cputop(
     wire        idex_rs2_en;
     wire [4:0]  idex_rs1;
     wire [4:0]  idex_rs2;
+    wire idex_s_flag;
+
 
     // EX模块信号
     wire [31:0] ex_result;
     wire [31:0] ex_result_addr;
     wire [31:0] ex_correctpc;
+    
 
     assign datamem_op=idex_mem_op[2:0];
     assign datamem_w_en=idex_mem_op[3];
@@ -86,32 +90,34 @@ module cputop(
     wire        exmem_wb_en;
     wire [31:0] exmem_result;
     wire        exmem_read_en;
-    //wire [31:0] exmem_result_addr;
     wire [4:0]  exmem_rd;
-    //wire [2:0]  exmem_op;
+    wire        exmem_s_flag;
     
     // MEM/WB寄存器信号
     wire        memwb_wb_en;
     wire [31:0] memwb_result;
     wire [4:0]  memwb_rd;
+    wire        memwb_flag;
     
     
     // Debug Interface 
-    reg wb_pc;
-    reg mem_pc;
-    assign debug_wb_have_inst = memwb_wb_en;
-    assign debug_wb_pc        = wb_pc;
+    reg wb_pc_reg;
+    reg mem_pc_reg;
+    //reg debug_wb_have_inst_reg;
+    assign debug_wb_have_inst = memwb_flag;
+    assign debug_wb_pc        = wb_pc_reg;
     assign debug_wb_ena       = memwb_wb_en;
     assign debug_wb_reg       = memwb_rd;
     assign debug_wb_value     = memwb_result;
     always@(posedge clk or negedge rst_n) begin
         if(~rst_n) begin
-            wb_pc<=32'b0;
-            mem_pc<=32'b0;
+            wb_pc_reg<=32'b0;
+            mem_pc_reg<=32'b0;
+            //debug_wb_have_inst_reg<=1'b0;
         end
         else begin
-            mem_pc<=idex_jump_en?ex_correctpc:idex_pc;
-            wb_pc<=mem_pc;
+            mem_pc_reg<=idex_pc;
+            wb_pc_reg<=mem_pc_reg;
         end
     end
 
@@ -137,24 +143,24 @@ module cputop(
         .rst_n(rst_n),
         .checkpre_flush(flush),
         .feedforward_stall(stall),
+
         .instrmem_instr_data(instrmem_instr_data),
         .instr_addr_i(instrmem_instr_addr),
         .decoder_instr(ifid_instr),
-        .instr_addr_o(ifid_instr_addr)
+        .instr_addr_o(ifid_instr_addr),
+        .s_flag(ifid_s_flag)
     );
 
     // ---------------------- 译码器 ----------------------
     decoder decoder_inst (
         .instr(ifid_instr),
-        //.instr_addr_i(ifid_instr_addr),
         .imm(decoder_imm),
         .imm_en(decoder_imm_en),
         .op(decoder_op),
         .funct7(decoder_funct7),
         .funct3(decoder_funct3),
         .rd_addr(decoder_rd),
-        .rd_en(decoder_rd_en),
-        //.instr_addr_o(idex_instr_addr),          
+        .rd_en(decoder_rd_en),        
         .mem_op(decoder_mem_op),
         .jump_en(decoder_jump_en),
         .rs1_addr(decoder_rs1),
@@ -184,6 +190,7 @@ module cputop(
         .rst_n(rst_n),
         .checkpre_flush(flush),
         .feedforward_stall(stall),
+        .s_flag_i(ifid_s_flag),
 
         .regbag_data1(regbag_data1),
         .regbag_data2(regbag_data2),
@@ -219,7 +226,8 @@ module cputop(
         .jump_en_o(idex_jump_en),
         .pc_o(idex_pc),
         .rs1_o(idex_rs1),
-        .rs2_o(idex_rs2)
+        .rs2_o(idex_rs2),
+        .s_flag_o(idex_s_flag)
     );
 
     // ---------------------- EX模块 ----------------------
@@ -245,7 +253,8 @@ module cputop(
         .exdata(exmem_result),        // 前递数据（来自EX阶段）
         .memdata(memwb_result),     // 前递数据（来自MEM阶段）
         .pc(idex_pc),
-        .nextpc(instrmem_instr_addr),   //NOTES:需要连接if阶段的new addr
+        .nextpc(ifid_instr_addr),   //NOTES:需要连接if阶段的new addr
+        .s_flag(idex_s_flag),
 
         .exresult(ex_result),
         .result_address(ex_result_addr),
@@ -262,32 +271,21 @@ module cputop(
         .rst_n(rst_n),
 
         .result_i(ex_result),
-        //.result_address_i(ex_result_addr),
         .rd_i(idex_rd),
         .wb_en_i(idex_rd_en),
         .read_en_i(idex_mem_op[4]), // Load指令标志
-        //.mem_op_i(idex_mem_op[2:0]),
         .update_en_i(update_en),
         .brunch_taken_i(brunch_taken),
+        .s_flag_i(idex_s_flag),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
         .read_en_o(exmem_read_en),//a
-        //.result_address_o(exmem_result_addr),//a
-        //.mem_op_o(exmem_op),//a,a信号为了得到datamem_datar
         .rd_o(exmem_rd),
         .update_en_o(update_en_o),
-        .brunch_taken_o(brunch_taken_o)
+        .brunch_taken_o(brunch_taken_o),
+        .s_flag_o(exmem_s_flag)
     );
-    // assign datamem_op_r=exmem_op;
-    // assign datamem_r_en=exmem_read_en;
-    // assign datamem_addr_r=exmem_result_addr;
-
-    // assign datamem_op_w=idex_mem_op[2:0];
-    // assign datamem_w_en=idex_mem_op[3];//作为同步写入，为了保持时序一致性，需要从idex里面取这个
-    // assign datamem_addr_w=ex_result_addr;
-    // assign datamem_dataw = idex_data2;  // 写入数据来自寄存器堆读取的数据2
-
     
 
     // ---------------------- MEM/WB寄存器 ----------------------
@@ -298,10 +296,13 @@ module cputop(
         .wb_en(exmem_wb_en),
         .rd(exmem_rd),
         .result(exmem_read_en ? datamem_datar : exmem_result), // 选择ALU或存储器数据
+        .s_flag_i(exmem_s_flag),
 
         .regbag_w_data(memwb_result),
         .regbag_w_addr(memwb_rd),
-        .regbag_w_en(memwb_wb_en)
+        .regbag_w_en(memwb_wb_en),
+        .s_flag_o(memwb_flag)
+
     );
 
 endmodule
@@ -468,26 +469,6 @@ assign idexreg_r_data2 = (!decoder_r_en2) ? 32'b0 :          // 读使能关闭
 
 endmodule
 
-`timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 2025/04/08 18:18:22
-// Design Name: 
-// Module Name: IF_spec
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
 
 //README:为了代码的可读性与可维护性，我会尽可能地将大模块划分为几个小模块。同时为了不与spec文档产生过多冲突，我会尽量沿用spec文档中的变量名，并对新增的模块和变量予以注释说明
 module IF_top(
@@ -945,6 +926,7 @@ module ex (
     input [31:0] memdata,
     input [31:0] pc,//这条指令的pc
     input [31:0] nextpc,//下条指令的pc
+    input s_flag,
 
     output [31:0] exresult,
     output [31:0] result_address,//仅仅用于访存load与store语句
@@ -972,6 +954,7 @@ module ex (
     wire [31:0] alu_result;
     wire [31:0] op1, op2;
     wire zero;
+    wire stall1;
     
    // 根据opcode和funct生成alu_op的逻辑
 always @(*) begin
@@ -1050,7 +1033,7 @@ end
         .rd_en(rd_en),
         .exdata(exdata),
         .memdata(memdata),
-        .stall(stall),
+        .stall(stall1),
         .op1(op1),
         .op2(op2)
     );
@@ -1087,10 +1070,11 @@ end
             correctpcreg=alu_result;
         end
         else begin
-            correctpcreg=31'd0;
+            correctpcreg=pc+4;
         end
     end
-    assign flush=jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0;
+    assign stall=s_flag?1'b0:stall1;
+    assign flush=s_flag?1'b0:(jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0);
     assign correctpc=correctpcreg;
     assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
     assign exresult=(op == 7'b0100011)?data2:alu_result;
@@ -1257,6 +1241,7 @@ module memwbreg(
     // 基础控制信号
     input         clk,              // 时钟
     input         rst_n,            // 异步复位（低电平有效）
+    input         s_flag_i,
     
     // 来自访存阶段（MEM）的输入
     input         wb_en,            // 写回使能（控制是否写回寄存器堆）
@@ -1266,14 +1251,15 @@ module memwbreg(
     // 传递到写回阶段（WB）的输出
     output [31:0] regbag_w_data,    // 写入寄存器堆的数据
     output [4:0]  regbag_w_addr,    // 写入寄存器堆的地址
-    output        regbag_w_en       // 寄存器堆写使能
+    output        regbag_w_en,       // 寄存器堆写使能
+    output        s_flag_o
 );
 
 // ===== 寄存器声明 =====
 reg [31:0] result_reg;    // 数据寄存器
 reg [4:0]  rd_reg;        // 目标寄存器编号寄存器
 reg        wb_en_reg;     // 写回使能寄存器
-
+reg        s_flag_reg;
 // ===== 时序逻辑（时钟驱动） =====
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -1281,12 +1267,14 @@ always @(posedge clk or negedge rst_n) begin
         result_reg <= 32'h0;
         rd_reg     <= 5'h0;
         wb_en_reg  <= 1'b0;
+        s_flag_reg <= 1'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
         result_reg <= result;
         rd_reg     <= rd;
-        wb_en_reg  <= wb_en;
+        wb_en_reg  <= wb_en&&s_flag_i;
+        s_flag_reg <= s_flag_i;
     end
 end
 
@@ -1294,7 +1282,7 @@ end
 assign regbag_w_data = result_reg;  // 直接传递数据
 assign regbag_w_addr = rd_reg;      // 直接传递目标寄存器地址
 assign regbag_w_en   = wb_en_reg;   // 直接传递写使能
-
+assign s_flag_o=s_flag_reg;
 endmodule
 
 
@@ -1302,6 +1290,8 @@ module exmemreg(
     // 基础控制信号
     input         clk,          // 时钟
     input         rst_n,        // 异步复位（低电平有效）
+    input         stall,
+    input         s_flag_i,
     
     // 来自执行阶段（EX）的数据
     input  [31:0] result_i,     // ALU计算结果
@@ -1317,7 +1307,8 @@ module exmemreg(
     output [4:0]  rd_o,          // 目标寄存器编号
     output        read_en_o,
     output         update_en_o,
-    output         brunch_taken_o
+    output         brunch_taken_o,
+    output         s_flag_o
 );
 
 // ===== 寄存器声明 =====
@@ -1327,7 +1318,7 @@ reg        wb_en_reg;     // 写回使能寄存器
 reg        read_en_reg;
 reg        update_en_reg;
 reg        brunch_taken_reg;
-
+reg        s_flag_reg;
 // ===== 时序逻辑 =====
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -1338,6 +1329,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<= 1'b0;
         update_en_reg<= 1'b0;
         brunch_taken_reg<= 1'b0;
+        s_flag_reg<=1'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1347,6 +1339,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<=read_en_i;
         update_en_reg<=update_en_i;
         brunch_taken_reg<=brunch_taken_i;
+        s_flag_reg<=s_flag_i||stall;
     end
 end
 
@@ -1357,6 +1350,7 @@ assign wb_en_o  = wb_en_reg;
 assign read_en_o= read_en_reg;
 assign update_en_o=update_en_reg;
 assign brunch_taken_o=brunch_taken_reg;
+assign s_flag_o=s_flag_reg;
 endmodule
 
 module ifidreg(
@@ -1366,13 +1360,15 @@ module ifidreg(
     input checkpre_flush,
     input feedforward_stall,
     input [31:0] instr_addr_i,
+
     output [31:0] decoder_instr,
-    output [31:0] instr_addr_o
+    output [31:0] instr_addr_o,
+    output s_flag
 );
     // 流水线寄存器（包含指令和地址）
     reg [31:0] pipeline_reg;
     reg [31:0] addr_reg;  // 新增地址寄存器
-
+    reg s_flag_reg;
     //==============================
     // 流水线控制逻辑（优先级：冲刷 > 阻塞 > 正常传输）
     //==============================
@@ -1381,22 +1377,27 @@ module ifidreg(
             // 异步复位：清空流水线（输出NOP指令和0地址）
             pipeline_reg <= 32'h00000013;  // ADDI x0, x0, 0 (NOP)
             addr_reg <= 32'd0;
+            s_flag_reg <=1'b0;
         end
         else begin
+            s_flag_reg<=checkpre_flush;
             casez ({checkpre_flush, feedforward_stall})
                 2'b1?: begin
                     // 冲刷优先（插入气泡）
                     pipeline_reg <= 32'h00000013;
                     addr_reg <= 32'd0;
+                    //s_flag<=1'b1;
                 end
                 2'b01: begin
                     // 保持当前状态（阻塞）
                     // 两个寄存器都保持原值
+                    //s_flag<=1'b1;
                 end
                 default: begin
                     // 正常传输
                     pipeline_reg <= instrmem_instr_data;
                     addr_reg <= instr_addr_i;
+                    //s_flag<=1'b0;
                 end
             endcase
         end
@@ -1405,6 +1406,7 @@ module ifidreg(
     // 输出连接
     assign decoder_instr = pipeline_reg;
     assign instr_addr_o = addr_reg;  // 直接使用寄存器输出
+    assign s_flag=s_flag_reg;
 endmodule
 
 module idexreg(
@@ -1412,6 +1414,7 @@ module idexreg(
     input rst_n,
     input checkpre_flush,
     input feedforward_stall,
+    input s_flag_i,
 
     input [31:0] regbag_data1,
     input [31:0] regbag_data2,
@@ -1449,7 +1452,8 @@ module idexreg(
     output jump_en_o,
     output [31:0] pc_o,
     output [4:0] rs1_o,
-    output [4:0] rs2_o
+    output [4:0] rs2_o,
+    output s_flag_o
     //output [31:0] exdata_o,
     //output [31:0] memdata_o
 );
@@ -1469,7 +1473,7 @@ reg [2:0] funct3_reg;
 reg [4:0] mem_op_reg;
 reg jump_en_reg;
 reg [31:0] pc_reg;
-
+reg s_flag_reg;
 //==============================
 // 流水线控制逻辑（优先级：冲刷 > 阻塞 > 正常传输）
 //==============================
@@ -1490,8 +1494,10 @@ always @(posedge clk or negedge rst_n) begin
         mem_op_reg <= 5'h0;
         jump_en_reg <= 1'b0;
         pc_reg <= 32'h0;
+        s_flag_reg<=1'b0;
     end
     else begin
+        s_flag_reg<=s_flag_i||checkpre_flush;
         casez ({checkpre_flush, feedforward_stall})
             2'b1?: begin  // 冲刷优先（插入气泡）
                 data1_reg <= 32'h0;
@@ -1527,6 +1533,7 @@ always @(posedge clk or negedge rst_n) begin
                 mem_op_reg <= mem_op_i;
                 jump_en_reg <= jump_en_i;
                 pc_reg <= pc_i;
+
             end
         endcase
     end
@@ -1547,6 +1554,7 @@ assign en2_o = en2_reg;
 assign mem_op_o = mem_op_reg;
 assign jump_en_o = jump_en_reg;
 assign pc_o = pc_reg;
+assign s_flag_o=s_flag_reg;
 
 //==============================
 // 设计要点说明

@@ -2,6 +2,8 @@ module exmemreg(
     // 基础控制信号
     input         clk,          // 时钟
     input         rst_n,        // 异步复位（低电平有效）
+    input         stall,
+    input         s_flag_i,
     
     // 来自执行阶段（EX）的数据
     input  [31:0] result_i,     // ALU计算结果
@@ -17,7 +19,8 @@ module exmemreg(
     output [4:0]  rd_o,          // 目标寄存器编号
     output        read_en_o,
     output         update_en_o,
-    output         brunch_taken_o
+    output         brunch_taken_o,
+    output         s_flag_o
 );
 
 // ===== 寄存器声明 =====
@@ -27,7 +30,7 @@ reg        wb_en_reg;     // 写回使能寄存器
 reg        read_en_reg;
 reg        update_en_reg;
 reg        brunch_taken_reg;
-
+reg        s_flag_reg;
 // ===== 时序逻辑 =====
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -38,6 +41,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<= 1'b0;
         update_en_reg<= 1'b0;
         brunch_taken_reg<= 1'b0;
+        s_flag_reg<=1'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -47,6 +51,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<=read_en_i;
         update_en_reg<=update_en_i;
         brunch_taken_reg<=brunch_taken_i;
+        s_flag_reg<=s_flag_i||stall;
     end
 end
 
@@ -57,4 +62,5 @@ assign wb_en_o  = wb_en_reg;
 assign read_en_o= read_en_reg;
 assign update_en_o=update_en_reg;
 assign brunch_taken_o=brunch_taken_reg;
+assign s_flag_o=s_flag_reg;
 endmodule

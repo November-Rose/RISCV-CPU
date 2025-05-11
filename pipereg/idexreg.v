@@ -3,6 +3,7 @@ module idexreg(
     input rst_n,
     input checkpre_flush,
     input feedforward_stall,
+    input s_flag_i,
 
     input [31:0] regbag_data1,
     input [31:0] regbag_data2,
@@ -40,7 +41,8 @@ module idexreg(
     output jump_en_o,
     output [31:0] pc_o,
     output [4:0] rs1_o,
-    output [4:0] rs2_o
+    output [4:0] rs2_o,
+    output s_flag_o
     //output [31:0] exdata_o,
     //output [31:0] memdata_o
 );
@@ -60,7 +62,7 @@ reg [2:0] funct3_reg;
 reg [4:0] mem_op_reg;
 reg jump_en_reg;
 reg [31:0] pc_reg;
-
+reg s_flag_reg;
 //==============================
 // 流水线控制逻辑（优先级：冲刷 > 阻塞 > 正常传输）
 //==============================
@@ -81,8 +83,10 @@ always @(posedge clk or negedge rst_n) begin
         mem_op_reg <= 5'h0;
         jump_en_reg <= 1'b0;
         pc_reg <= 32'h0;
+        s_flag_reg<=1'b0;
     end
     else begin
+        s_flag_reg<=s_flag_i||checkpre_flush;
         casez ({checkpre_flush, feedforward_stall})
             2'b1?: begin  // 冲刷优先（插入气泡）
                 data1_reg <= 32'h0;
@@ -118,6 +122,7 @@ always @(posedge clk or negedge rst_n) begin
                 mem_op_reg <= mem_op_i;
                 jump_en_reg <= jump_en_i;
                 pc_reg <= pc_i;
+
             end
         endcase
     end
@@ -138,6 +143,7 @@ assign en2_o = en2_reg;
 assign mem_op_o = mem_op_reg;
 assign jump_en_o = jump_en_reg;
 assign pc_o = pc_reg;
+assign s_flag_o=s_flag_reg;
 
 //==============================
 // 设计要点说明
