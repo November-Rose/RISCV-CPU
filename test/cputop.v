@@ -67,7 +67,6 @@ module cputop(
     wire [4:0]  idex_mem_op;
     wire        idex_jump_en;
     wire [31:0] idex_pc;
-    //wire [31:0] idex_instr_addr;
     wire        idex_rs1_en;
     wire        idex_rs2_en;
     wire [4:0]  idex_rs1;
@@ -270,6 +269,7 @@ module cputop(
     exmemreg exmemreg_inst (
         .clk(clk),
         .rst_n(rst_n),
+        .stall(stall),
 
         .result_i(ex_result),
         .rd_i(idex_rd),
@@ -281,7 +281,7 @@ module cputop(
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
-        .read_en_o(exmem_read_en),//a
+        .read_en_o(exmem_read_en),
         .rd_o(exmem_rd),
         .update_en_o(update_en_o),
         .brunch_taken_o(brunch_taken_o),
@@ -303,7 +303,6 @@ module cputop(
         .regbag_w_addr(memwb_rd),
         .regbag_w_en(memwb_wb_en),
         .s_flag_o(memwb_flag)
-
     );
 
 endmodule
@@ -809,7 +808,6 @@ endmodule
 module decoder (
     //========== 输入 ==========//
     input  [31:0] instr,         // 来自IF/ID寄存器的指令
-    //input  [31:0] instr_addr_i,  // 当前指令地址（用于PC相对计算）我认为应该是在checkpre里面用此条指令的上一条指令的addr来比较
     
     //========== 输出到ID/EX ==========//
     output [31:0] imm,           // 解码出的立即数（符号扩展后）
@@ -819,7 +817,6 @@ module decoder (
     output [2:0]  funct3,        // 功能码低3位
     output [4:0]  rd_addr,       // 目标寄存器地址
     output        rd_en,         // 目标寄存器写使能
-    //output [31:0] instr_addr_o,  // 传递指令地址（用于JALR等）
     output [4:0]  mem_op,        // 内存操作类型（LB/LH/LW/LBU/LHU/SB/SH/SW）,低3位位datamem里面的op，高2位位r_en和w_en
     output        jump_en,       // 跳转指令使能
     
@@ -902,8 +899,8 @@ module decoder (
     end
     //产生memop
     assign mem_op[2:0] = mem_op_reg;
-    assign mem_op[3]=load;//r_en
-    assign mem_op[4]=store;//w_en
+    assign mem_op[4]=load;//r_en
+    assign mem_op[3]=store;//w_en
 endmodule
 
 
@@ -952,7 +949,7 @@ module ex (
     localparam OP_OR   = 4'b1000;
     localparam OP_AND  = 4'b1001;
 
-    wire load = mem_op[3];
+    wire load = mem_op[4];
     reg [3:0] alu_op;
     wire [31:0] alu_result;
     wire [31:0] op1, op2;
@@ -1502,6 +1499,7 @@ always @(posedge clk or negedge rst_n) begin
                 rs2_reg <= 5'b0;
             end
             2'b01: begin  // 保持当前状态（阻塞）
+                //mem_op_reg <= {1'b0,mem_op_i[3:0]};
                 // 所有寄存器保持不变
             end
             default: begin // 正常传输
