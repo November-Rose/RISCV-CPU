@@ -58,5 +58,5 @@ module miniRV_SoC (
         .we         (perip_wen),    // 写使能
         .d          (perip_wdata)   // 写入数据
     );
-
+    
 endmodule

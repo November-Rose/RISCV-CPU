@@ -78,12 +78,10 @@ module cputop(
     wire [31:0] ex_result;
     wire [31:0] ex_result_addr;
     wire [31:0] ex_correctpc;
+    wire [31:0] ex_datamem_dataw;
     
 
-    assign datamem_op=exmem_mem_op[2:0];
-    assign datamem_w_en=idex_mem_op[3];
-    assign datamem_addr=exmem_result_addr;
-    //assign datamem_dataw=idex_data2;
+    
 
      // EX/MEM寄存器信号
     wire        exmem_wb_en;
@@ -121,7 +119,10 @@ module cputop(
             wb_pc_reg<=mem_pc_reg;
         end
     end
-
+    assign datamem_op=exmem_mem_op[2:0];
+    assign datamem_w_en=exmem_mem_op[3];
+    assign datamem_addr=exmem_result_addr;
+    //assign datamem_dataw=idex_data2;
     // ====================== 模块实例化 ======================
 
     // ---------------------- IF ----------------------
@@ -264,7 +265,7 @@ module cputop(
         .correctpc(ex_correctpc),
         .update_en(update_en), // 更新信号
         .brunch_taken(brunch_taken),
-        .datamem_dataw(datamem_dataw)
+        .datamem_dataw(ex_datamem_dataw)
     );
 
     // ---------------------- EX/MEM寄存器 ----------------------
@@ -282,6 +283,7 @@ module cputop(
         .s_flag_i(idex_s_flag),
         .result_addr_i(ex_result_addr),
         .exmem_mem_op_i(idex_mem_op),
+        .exmem_datamem_dataw_i(ex_datamem_dataw),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
@@ -291,7 +293,8 @@ module cputop(
         .brunch_taken_o(brunch_taken_o),
         .s_flag_o(exmem_s_flag),
         .result_addr_o(exmem_result_addr),
-        .exmem_mem_op_o(exmem_mem_op)
+        .exmem_mem_op_o(exmem_mem_op),
+        .exmem_datamem_dataw_o(datamem_dataw)
     );
     
 
@@ -887,6 +890,7 @@ module decoder (
                 default: mem_op_reg = 3'b111; // 无效
             endcase
             load=1'd1;
+            store=1'd0;
         end
         else if (op == 7'b0100011) begin     // Store指令
             case (funct3)
@@ -896,6 +900,7 @@ module decoder (
                 default: mem_op_reg = 3'b111; // 无效
             endcase
             store=1'd1;
+            load=1'd0;
         end
         else begin
             mem_op_reg = 3'b111;             // 非内存操作（默认值）
@@ -1047,10 +1052,10 @@ end
         .memdata(memdata),
         .stall(stall1),
         .op1(op1),
-        .op2(op2)
-        //.datamem_dataw(datamem_dataw)
+        .op2(op2),
+        .datamem_dataw(datamem_dataw)
     );
-    assign datamem_dataw=op2;
+
     // 实例化ALU
     alu alu_unit (
         .a(op1),
@@ -1163,13 +1168,14 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
 
     output stall,
     output [31:0] op1,
-    output [31:0] op2
+    output [31:0] op2,
+    output [31:0] datamem_dataw
 );
 reg [14:0] rd;
 reg [2:0]  en;
 wire alu_imm_en;
 
-assign alu_imm_en= (opcode == 7'b0010011 || opcode == 7'b0000011 || opcode == 7'b1100111);//根据rv32i指令集的op与imm_en确定出哪些指令的alu运算中涉及立即数
+assign alu_imm_en= (opcode == 7'b0010011 || opcode == 7'b0000011 || opcode == 7'b1100111 || opcode == 7'b0100011);//根据rv32i指令集的op与imm_en确定出哪些指令的alu运算中涉及立即数
 //------------------------------------------
     // 数据冒险检测信号（重命名 flag 为更清晰的名称）
     //------------------------------------------
@@ -1194,6 +1200,7 @@ end
 assign stall=load&(rs2_dep_ex |rs1_dep_ex);
 //5选2决定op1，op2
  reg [31:0] op1_selected, op2_selected;
+ reg [31:0] datamem_dataw_reg;
 
     always @(*) begin
         // JAL 指令特殊处理（op1=PC, op2=imm）
@@ -1217,12 +1224,17 @@ assign stall=load&(rs2_dep_ex |rs1_dep_ex);
                 op2_selected = memdata;
             end
             else op2_selected=data2;
+
+            //[31:0] datamem_dataw选择
+            if (rs2_dep_ex)       datamem_dataw_reg = exdata;    // 前一条指令的结果
+            else if (rs2_dep_mem) datamem_dataw_reg = memdata;  // 前两条指令的结果
+            else datamem_dataw_reg=data2;
         end
     end
 
     assign op1 = op1_selected;
     assign op2 = op2_selected;
-
+    assign datamem_dataw=datamem_dataw_reg;
 endmodule
 
 
@@ -1292,6 +1304,7 @@ module exmemreg(
     input         brunch_taken_i,
     input [31:0]  result_addr_i,
     input [4:0]        exmem_mem_op_i,
+    input [31:0] exmem_datamem_dataw_i,
     
     // 传递到访存阶段（MEM）的信号
     output        wb_en_o,      // 写回使能
@@ -1302,7 +1315,8 @@ module exmemreg(
     output         brunch_taken_o,
     output         s_flag_o,
     output [31:0]  result_addr_o,
-    output [4:0]   exmem_mem_op_o
+    output [4:0]   exmem_mem_op_o,
+    output [31:0] exmem_datamem_dataw_o
 );
 
 // ===== 寄存器声明 =====
@@ -1315,6 +1329,7 @@ reg        update_en_reg;
 reg        brunch_taken_reg;
 reg        s_flag_reg;
 reg [4:0]  mem_op_reg;
+reg [31:0] exmem_datamem_dataw_reg;
 // ===== 时序逻辑 =====
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -1328,6 +1343,7 @@ always @(posedge clk or negedge rst_n) begin
         s_flag_reg<=1'b1;
         result_addr_reg<=1'b0;
         mem_op_reg<=5'b0;
+        exmem_datamem_dataw_reg<=32'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1340,6 +1356,7 @@ always @(posedge clk or negedge rst_n) begin
         result_addr_reg<=result_addr_i;
         s_flag_reg<=s_flag_i||stall;
         mem_op_reg<=exmem_mem_op_i;
+        exmem_datamem_dataw_reg<=exmem_datamem_dataw_i;
     end
 end
 
@@ -1353,6 +1370,7 @@ assign brunch_taken_o=brunch_taken_reg;
 assign s_flag_o=s_flag_reg;
 assign result_addr_o=result_addr_reg;
 assign exmem_mem_op_o=mem_op_reg;
+assign exmem_datamem_dataw_o=exmem_datamem_dataw_reg;
 endmodule
 
 module ifidreg(

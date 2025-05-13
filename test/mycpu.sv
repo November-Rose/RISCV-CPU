@@ -11,7 +11,7 @@ module myCPU (
     output [31:0] perip_addr,
     output        perip_wen,
     output [1:0]  perip_mask,
-    output [31:0] perip_wdata,
+    output [31:0] perip_wdata,      //  正确写入
     input  [31:0] perip_rdata,    // 从外设读取的原始数据（未扩展）
 
     output wire        debug_wb_have_inst,   // WB阶段是否有指令 (对单周期CPU，可在复位后恒为1)
@@ -43,7 +43,7 @@ module myCPU (
     wire [2:0] datamem_op;
     reg [1:0] perip_mask_reg;
     wire [31:0] datamem_datar;  // 符号扩展后的数据
-
+    wire [31:0] datamem_dataw;  //原始
     // 实例化cputop
     cputop u_cputop (
         .clk                 (cpu_clk),  //NOTES:疑似bug，w_cpu_clk->cpu_clk,下同
@@ -54,7 +54,7 @@ module myCPU (
         .datamem_w_en        (perip_wen),
         .datamem_addr        (perip_addr),
         .datamem_op          (datamem_op),
-        .datamem_dataw       (perip_wdata),
+        .datamem_dataw       (datamem_dataw),  
         .debug_wb_have_inst  (debug_wb_have_inst),
         .debug_wb_pc(debug_wb_pc),
         .debug_wb_ena(debug_wb_ena),
@@ -119,5 +119,40 @@ module myCPU (
         endcase
     end
     assign datamem_datar = datamem_datar_reg;
-    
+    //dataw
+    reg [31:0 ] perip_wdata_reg;
+    // 存储指令的数据写入逻辑
+    always @(*) begin
+        case (datamem_op)
+            // Store Byte (sb): 写入 1 字节
+            SB: begin
+                case (perip_addr[1:0])
+                    2'b00: perip_wdata_reg = {perip_rdata[31:8], datamem_dataw[7:0]};    // 写入 [7:0]
+                    2'b01: perip_wdata_reg = {perip_rdata[31:16], datamem_dataw[7:0], perip_rdata[7:0]}; // 写入 [15:8]
+                    2'b10: perip_wdata_reg = {perip_rdata[31:24], datamem_dataw[7:0], perip_rdata[15:0]}; // 写入 [23:16]
+                    2'b11: perip_wdata_reg = {datamem_dataw[7:0], perip_rdata[23:0]};    // 写入 [31:24]
+                endcase
+            end
+
+            // Store Halfword (sh): 写入 2 字节
+            SH: begin
+                case (perip_addr[1])
+                    1'b0: perip_wdata_reg = {perip_rdata[31:16], datamem_dataw[15:0]};   // 写入 [15:0]
+                    1'b1: perip_wdata_reg = {datamem_dataw[15:0], perip_rdata[15:0]};    // 写入 [31:16]
+                endcase
+            end
+
+            // Store Word (sw): 写入 4 字节
+            SW: begin
+                perip_wdata_reg = datamem_dataw;  // 直接写入全部 32 位
+            end
+
+            // 默认情况（非存储指令或未定义操作）
+            default: begin
+                perip_wdata_reg = perip_rdata;    // 保持原数据不变
+            end
+        endcase
+    end
+    assign perip_wdata = perip_wdata_reg;
+
 endmodule
