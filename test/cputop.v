@@ -80,7 +80,10 @@ module cputop(
     wire [31:0] ex_correctpc;
     
 
-    
+    assign datamem_op=exmem_mem_op[2:0];
+    assign datamem_w_en=idex_mem_op[3];
+    assign datamem_addr=exmem_result_addr;
+    assign datamem_dataw=idex_data2;
 
      // EX/MEM寄存器信号
     wire        exmem_wb_en;
@@ -119,10 +122,6 @@ module cputop(
         end
     end
 
-    assign datamem_op=exmem_mem_op[2:0];
-    assign datamem_w_en=idex_mem_op[3];
-    assign datamem_addr=exmem_result_addr;
-    assign datamem_dataw=idex_data2;
     // ====================== 模块实例化 ======================
 
     // ---------------------- IF ----------------------
