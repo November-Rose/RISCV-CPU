@@ -83,7 +83,7 @@ module cputop(
     assign datamem_op=exmem_mem_op[2:0];
     assign datamem_w_en=idex_mem_op[3];
     assign datamem_addr=exmem_result_addr;
-    assign datamem_dataw=idex_data2;
+    //assign datamem_dataw=idex_data2;
 
      // EX/MEM寄存器信号
     wire        exmem_wb_en;
@@ -263,7 +263,8 @@ module cputop(
         .flush(flush),
         .correctpc(ex_correctpc),
         .update_en(update_en), // 更新信号
-        .brunch_taken(brunch_taken)
+        .brunch_taken(brunch_taken),
+        .datamem_dataw(datamem_dataw)
     );
 
     // ---------------------- EX/MEM寄存器 ----------------------
@@ -939,7 +940,8 @@ module ex (
     output flush,
     output [31:0] correctpc,
     output brunch_taken,
-    output update_en
+    output update_en,
+    output [31:0] datamem_dataw
 );
 
     // ALU操作码定义（与alu模块一致）
@@ -1046,8 +1048,9 @@ end
         .stall(stall1),
         .op1(op1),
         .op2(op2)
+        //.datamem_dataw(datamem_dataw)
     );
-
+    assign datamem_dataw=op2;
     // 实例化ALU
     alu alu_unit (
         .a(op1),
