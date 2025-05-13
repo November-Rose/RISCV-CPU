@@ -1108,7 +1108,7 @@ module alu (
     // ================= ALU核心运算逻辑 =================
     always @(*) begin
         case (alu_op)
-            OP_ADD:  result = a + b;                    // 加法
+            OP_ADD:  result = a + b;                    // 加法  //NOTES:考虑立即数了吗？
             OP_SUB:  result = a - b;                    // 减法
             OP_SLL:  result = a << shamt;               // 左移（低位补0）
             OP_SLT:  result = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0; // 有符号比较
@@ -1162,7 +1162,7 @@ wire [3:0] flag;
 assign flag[3]=(rs2[4:0]==rd[14:10])?1:0;
 assign flag[2]=(rs1[4:0]==rd[14:10])?1:0;
 assign flag[1]=(rs2[4:0]==rd[9:5])?1:0;
-assign flag[0]=(rs1[4:0]==rd[9:5])?1:0;
+assign flag[0]=(rs1[4:0]==rd[9:5])?1:0;  //NOTES:有问题，没有rd的指令会被记为00000，但是x0寄存器也是00000，导致意料之外的数据前递
 //串行存储3个rd
 always@(posedge clk or negedge rst_n)
 begin
@@ -1474,6 +1474,9 @@ reg [4:0] mem_op_reg;
 reg jump_en_reg;
 reg [31:0] pc_reg;
 reg s_flag_reg;
+//NOTES: rs1,rs2不能正常传播
+reg [4:0] rs1_reg;
+reg [4:0] rs2_reg;
 //==============================
 // 流水线控制逻辑（优先级：冲刷 > 阻塞 > 正常传输）
 //==============================
@@ -1495,6 +1498,8 @@ always @(posedge clk or negedge rst_n) begin
         jump_en_reg <= 1'b0;
         pc_reg <= 32'h0;
         s_flag_reg<=1'b1;
+        rs1_reg <= 5'h0;
+        rs2_reg <= 5'h0;
     end
     else begin
         s_flag_reg<=s_flag_i||checkpre_flush;
@@ -1514,6 +1519,10 @@ always @(posedge clk or negedge rst_n) begin
                 mem_op_reg <= 5'h0;
                 jump_en_reg <= 1'b0;
                 pc_reg <= pc_i; // 保持PC值不变
+
+                //rs1,rs2需要在这种情况下保留吗？
+                rs1_reg <= rs1_i;
+                rs2_reg <= rs2_i;
             end
             2'b01: begin  // 保持当前状态（阻塞）
                 // 所有寄存器保持不变
@@ -1533,7 +1542,8 @@ always @(posedge clk or negedge rst_n) begin
                 mem_op_reg <= mem_op_i;
                 jump_en_reg <= jump_en_i;
                 pc_reg <= pc_i;
-
+                rs1_reg <= rs1_i;
+                rs2_reg <= rs2_i;
             end
         endcase
     end
@@ -1555,7 +1565,8 @@ assign mem_op_o = mem_op_reg;
 assign jump_en_o = jump_en_reg;
 assign pc_o = pc_reg;
 assign s_flag_o=s_flag_reg;
-
+assign rs1_o = rs1_reg;
+assign rs2_o = rs2_reg;
 //==============================
 // 设计要点说明
 //==============================
