@@ -67,7 +67,7 @@ module cputop(
     wire [4:0]  idex_mem_op;
     wire        idex_jump_en;
     wire [31:0] idex_pc;
-    wire [31:0] idex_instr_addr;
+    //wire [31:0] idex_instr_addr;
     wire        idex_rs1_en;
     wire        idex_rs2_en;
     wire [4:0]  idex_rs1;
@@ -98,7 +98,8 @@ module cputop(
     wire [31:0] memwb_result;
     wire [4:0]  memwb_rd;
     wire        memwb_flag;
-    
+
+    //前馈信号
     
     // Debug Interface 
     reg [31:0] wb_pc_reg;
@@ -308,105 +309,6 @@ module cputop(
 endmodule
 
 
-module decoder (
-    //========== 输入 ==========//
-    input  [31:0] instr,         // 来自IF/ID寄存器的指令
-    //input  [31:0] instr_addr_i,  // 当前指令地址（用于PC相对计算）我认为应该是在checkpre里面用此条指令的上一条指令的addr来比较
-    
-    //========== 输出到ID/EX ==========//
-    output [31:0] imm,           // 解码出的立即数（符号扩展后）
-    output        imm_en,        // 立即数使用使能
-    output [6:0]  op,            // 操作码（instr[6:0]）
-    output [7:0]  funct7,        // 功能码高7位（含1位备用）
-    output [2:0]  funct3,        // 功能码低3位
-    output [4:0]  rd_addr,       // 目标寄存器地址
-    output        rd_en,         // 目标寄存器写使能
-    //output [31:0] instr_addr_o,  // 传递指令地址（用于JALR等）
-    output [4:0]  mem_op,        // 内存操作类型（LB/LH/LW/LBU/LHU/SB/SH/SW）,低3位位datamem里面的op，高2位位r_en和w_en
-    output        jump_en,       // 跳转指令使能
-    
-    //========== 输出到RegBag ==========//
-    output [4:0]  rs1_addr,      // 源寄存器1地址
-    output        rs1_en,        // 源寄存器1读使能
-    output [4:0]  rs2_addr,      // 源寄存器2地址
-    output        rs2_en         // 源寄存器2读使能
-);
-
-    // ================= 字段提取 =================
-    assign op      = instr[6:0];
-    assign funct3  = instr[14:12];
-    assign funct7  = {1'b0, instr[31:25]}; // 补零扩展到8位
-    assign rd_addr = instr[11:7];
-    assign rs1_addr= instr[19:15];
-    assign rs2_addr= instr[24:20];
-    //assign instr_addr_o = instr_addr_i;  // 直传指令地址
-
-    // ================= 立即数生成 =================
-    wire [31:0] i_imm = {{20{instr[31]}}, instr[31:20]};                    // I-type
-    wire [31:0] s_imm = {{20{instr[31]}}, instr[31:25], instr[11:7]};       // S-type
-    wire [31:0] b_imm = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0}; // B-type
-    wire [31:0] u_imm = {instr[31:12], 12'b0};                              // U-type
-    wire [31:0] j_imm = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0}; // J-type
-
-    // ================= 指令类型判断 =================
-    wire is_rtype = (op == 7'b0110011); // ADD/SUB等
-    wire is_itype = (op == 7'b0010011) || // ADDI等
-                    (op == 7'b0000011) || // LOAD
-                    (op == 7'b1100111);   // JALR
-    wire is_stype = (op == 7'b0100011);   // STORE
-    wire is_btype = (op == 7'b1100011);   // Branch
-    wire is_utype = (op == 7'b0110111) || // LUI
-                    (op == 7'b0010111);    // AUIPC
-    wire is_jtype = (op == 7'b1101111);   // JAL
-
-    // ================= 输出控制逻辑 =================
-    assign imm = is_itype ? i_imm :
-                 is_stype ? s_imm :
-                 is_btype ? b_imm :
-                 is_utype ? u_imm :
-                 is_jtype ? j_imm : 32'b0;
-    assign jump_en = (op == 7'b1100111) || (op == 7'b1101111) || (op == 7'b1100011); // JALR/JAL/Branch
-    assign imm_en  = is_itype || is_stype || is_btype || is_utype || is_jtype;
-    assign rd_en   = !is_stype && !is_btype; // STORE和BRANCH不写rd
-    assign rs1_en  = !is_utype && !is_jtype && (rs1_addr != 5'b0); // LUI/AUIPC/JAL不用rs1
-    assign rs2_en  = is_rtype || is_stype || is_btype; // 仅这三类指令需要rs2
-
-    // ================= 内存操作类型（mem_op）生成 =================
-    reg [2:0] mem_op_reg;
-    reg load;
-    reg store;
-    always @(*) begin
-        if (op == 7'b0000011) begin          // Load指令
-            case (funct3)
-                3'b000: mem_op_reg = 3'b000; // LB
-                3'b001: mem_op_reg = 3'b001; // LH
-                3'b010: mem_op_reg = 3'b010; // LW
-                3'b100: mem_op_reg = 3'b100; // LBU
-                3'b101: mem_op_reg = 3'b101; // LHU
-                default: mem_op_reg = 3'b111; // 无效
-            endcase
-            load=1'd1;
-        end
-        else if (op == 7'b0100011) begin     // Store指令
-            case (funct3)
-                3'b000: mem_op_reg = 3'b000; // SB
-                3'b001: mem_op_reg = 3'b001; // SH
-                3'b010: mem_op_reg = 3'b010; // SW
-                default: mem_op_reg = 3'b111; // 无效
-            endcase
-            store=1'd1;
-        end
-        else begin
-            mem_op_reg = 3'b111;             // 非内存操作（默认值）
-            load=1'd0;
-            store=1'd0;
-        end
-    end
-    //产生memop
-    assign mem_op[2:0] = mem_op_reg;
-    assign mem_op[3]=load;//r_en
-    assign mem_op[4]=store;//w_en
-endmodule
 
 module regbag (
     //========== 时钟与复位 ==========//
@@ -904,6 +806,107 @@ module BTB #(
     end
 endmodule    
 
+module decoder (
+    //========== 输入 ==========//
+    input  [31:0] instr,         // 来自IF/ID寄存器的指令
+    //input  [31:0] instr_addr_i,  // 当前指令地址（用于PC相对计算）我认为应该是在checkpre里面用此条指令的上一条指令的addr来比较
+    
+    //========== 输出到ID/EX ==========//
+    output [31:0] imm,           // 解码出的立即数（符号扩展后）
+    output        imm_en,        // 立即数使用使能
+    output [6:0]  op,            // 操作码（instr[6:0]）
+    output [7:0]  funct7,        // 功能码高7位（含1位备用）
+    output [2:0]  funct3,        // 功能码低3位
+    output [4:0]  rd_addr,       // 目标寄存器地址
+    output        rd_en,         // 目标寄存器写使能
+    //output [31:0] instr_addr_o,  // 传递指令地址（用于JALR等）
+    output [4:0]  mem_op,        // 内存操作类型（LB/LH/LW/LBU/LHU/SB/SH/SW）,低3位位datamem里面的op，高2位位r_en和w_en
+    output        jump_en,       // 跳转指令使能
+    
+    //========== 输出到RegBag ==========//
+    output [4:0]  rs1_addr,      // 源寄存器1地址
+    output        rs1_en,        // 源寄存器1读使能
+    output [4:0]  rs2_addr,      // 源寄存器2地址
+    output        rs2_en         // 源寄存器2读使能
+);
+
+    // ================= 字段提取 =================
+    assign op      = instr[6:0];
+    assign funct3  = instr[14:12];
+    assign funct7  = {1'b0, instr[31:25]}; // 补零扩展到8位
+    assign rd_addr = instr[11:7];
+    assign rs1_addr= instr[19:15];
+    assign rs2_addr= instr[24:20];
+    //assign instr_addr_o = instr_addr_i;  // 直传指令地址
+
+    // ================= 立即数生成 =================
+    wire [31:0] i_imm = {{20{instr[31]}}, instr[31:20]};                    // I-type
+    wire [31:0] s_imm = {{20{instr[31]}}, instr[31:25], instr[11:7]};       // S-type
+    wire [31:0] b_imm = {{20{instr[31]}}, instr[7], instr[30:25], instr[11:8], 1'b0}; // B-type
+    wire [31:0] u_imm = {instr[31:12], 12'b0};                              // U-type
+    wire [31:0] j_imm = {{12{instr[31]}}, instr[19:12], instr[20], instr[30:21], 1'b0}; // J-type
+
+    // ================= 指令类型判断 =================
+    wire is_rtype = (op == 7'b0110011); // ADD/SUB等
+    wire is_itype = (op == 7'b0010011) || // ADDI等
+                    (op == 7'b0000011) || // LOAD
+                    (op == 7'b1100111);   // JALR
+    wire is_stype = (op == 7'b0100011);   // STORE
+    wire is_btype = (op == 7'b1100011);   // Branch
+    wire is_utype = (op == 7'b0110111) || // LUI
+                    (op == 7'b0010111);    // AUIPC
+    wire is_jtype = (op == 7'b1101111);   // JAL
+
+    // ================= 输出控制逻辑 =================
+    assign imm = is_itype ? i_imm :
+                 is_stype ? s_imm :
+                 is_btype ? b_imm :
+                 is_utype ? u_imm :
+                 is_jtype ? j_imm : 32'b0;
+    assign jump_en = (op == 7'b1100111) || (op == 7'b1101111) || (op == 7'b1100011); // JALR/JAL/Branch
+    assign imm_en  = is_itype || is_stype || is_btype || is_utype || is_jtype;
+    assign rd_en   = !is_stype && !is_btype; // STORE和BRANCH不写rd
+    assign rs1_en  = !is_utype && !is_jtype && (rs1_addr != 5'b0); // LUI/AUIPC/JAL不用rs1
+    assign rs2_en  = is_rtype || is_stype || is_btype; // 仅这三类指令需要rs2
+
+    // ================= 内存操作类型（mem_op）生成 =================
+    reg [2:0] mem_op_reg;
+    reg load;
+    reg store;
+    always @(*) begin
+        if (op == 7'b0000011) begin          // Load指令
+            case (funct3)
+                3'b000: mem_op_reg = 3'b000; // LB
+                3'b001: mem_op_reg = 3'b001; // LH
+                3'b010: mem_op_reg = 3'b010; // LW
+                3'b100: mem_op_reg = 3'b100; // LBU
+                3'b101: mem_op_reg = 3'b101; // LHU
+                default: mem_op_reg = 3'b111; // 无效
+            endcase
+            load=1'd1;
+        end
+        else if (op == 7'b0100011) begin     // Store指令
+            case (funct3)
+                3'b000: mem_op_reg = 3'b000; // SB
+                3'b001: mem_op_reg = 3'b001; // SH
+                3'b010: mem_op_reg = 3'b010; // SW
+                default: mem_op_reg = 3'b111; // 无效
+            endcase
+            store=1'd1;
+        end
+        else begin
+            mem_op_reg = 3'b111;             // 非内存操作（默认值）
+            load=1'd0;
+            store=1'd0;
+        end
+    end
+    //产生memop
+    assign mem_op[2:0] = mem_op_reg;
+    assign mem_op[3]=load;//r_en
+    assign mem_op[4]=store;//w_en
+endmodule
+
+
 module ex (
     input clk,//仅仅为了串行存储rd，不会打破流水线时序
     input rst_n,
@@ -1061,7 +1064,7 @@ end
             3'b101:jumpflag=zero;
             3'b111:jumpflag=zero;
         endcase
-        correctpcreg=jumpflag?(pc+imm):(pc+4);//冒险bug
+        correctpcreg=jumpflag?(pc+imm):(pc+4);
         end
         else if (op[6:0]==7'b1101111) begin
             correctpcreg=alu_result;
@@ -1077,7 +1080,9 @@ end
     assign flush=s_flag?1'b0:(jump_en?((correctpc!=nextpc)?1'b1:1'b0):1'b0);
     assign correctpc=correctpcreg;
     assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
-    assign exresult=(op == 7'b0100011)?data2:alu_result;
+    assign exresult = (op == 7'b0010111) ? (pc + imm) :  // AUIPC
+                 (op == 7'b0110111) ? imm :         // LUI
+                 (op == 7'b0100011) ? op2 : alu_result;      // Store或其他指令
     assign update_en=jump_en;
     assign brunch_taken=jumpflag;
 endmodule
@@ -1108,7 +1113,7 @@ module alu (
     // ================= ALU核心运算逻辑 =================
     always @(*) begin
         case (alu_op)
-            OP_ADD:  result = a + b;                    // 加法  //NOTES:考虑立即数了吗？
+            OP_ADD:  result = a + b;                    // 加法 
             OP_SUB:  result = a - b;                    // 减法
             OP_SLL:  result = a << shamt;               // 左移（低位补0）
             OP_SLT:  result = ($signed(a) < $signed(b)) ? 32'd1 : 32'd0; // 有符号比较
@@ -1144,7 +1149,7 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
     input [31:0] pc,
     //input [2:0] func3,
     input [4:0] decode_rd,
-    input [4:0] rd_en,
+    input rd_en,
     input [31:0] exdata,
     input [31:0] memdata,
 
@@ -1154,24 +1159,28 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
     //output [4:0]alu_op
 );
 reg [14:0] rd;
+reg [2:0]  en;
 wire [4:0] newrd;
-assign newrd=rd_en?decode_rd:5'd0;
+assign newrd=rd_en?decode_rd:5'b0;
 wire [3:0] flag;
+wire alu_imm_en;
 
-
-assign flag[3]=(rs2[4:0]==rd[14:10])?1:0;
-assign flag[2]=(rs1[4:0]==rd[14:10])?1:0;
-assign flag[1]=(rs2[4:0]==rd[9:5])?1:0;
-assign flag[0]=(rs1[4:0]==rd[9:5])?1:0;  //NOTES:有问题，没有rd的指令会被记为00000，但是x0寄存器也是00000，导致意料之外的数据前递
+assign alu_imm_en= (opcode == 7'b0010011 || opcode == 7'b0000011 || opcode == 7'b1100111);//根据rv32i指令集的op与imm_en确定出哪些指令的alu运算中涉及立即数
+assign flag[3]=(rs2[4:0]==rd[9:5]&&rs2_en&&en[1])?1:0;
+assign flag[2]=(rs1[4:0]==rd[9:5]&&rs1_en&&en[1])?1:0;
+assign flag[1]=(rs2[4:0]==rd[4:0]&&rs2_en&&en[0])?1:0;
+assign flag[0]=(rs1[4:0]==rd[4:0]&&rs1_en&&en[0])?1:0;  
 //串行存储3个rd
 always@(posedge clk or negedge rst_n)
 begin
     if(!rst_n)
     begin
         rd[14:0]=15'd0;
+        en[2:0]=3'd0;
     end
     else begin
         rd[14:0]={rd[9:0],newrd[4:0]};
+        en[2:0]={en[1:0],rd_en};
     end
 end
 //stall产生
@@ -1180,20 +1189,12 @@ assign stall=load&(flag[1]|flag[0]);
 reg [31:0] op1reg;
 reg [31:0] op2reg;
 always @(*) begin
-    if (opcode == 7'b1100011) begin // branch
-        op1reg = data1;
-        op2reg = data2;
-    end
-    else if (opcode == 7'b1101111) begin // jal
+    if (opcode == 7'b1101111) begin // jal
         op1reg = pc;
         op2reg = imm;
     end
-    else if (opcode == 7'b1100111) begin // jalr
-        op1reg = data1;
-        op2reg = imm;
-    end
     else begin // 其他情况
-        if (imm_en) begin
+        if (alu_imm_en) begin
             op2reg = imm; // op2 固定为立即数
             case (flag)
                 4'b0000: op1reg = data1;
@@ -1236,6 +1237,7 @@ assign op1=op1reg;
 assign op2=op2reg;
 
 endmodule
+
 
 module memwbreg(
     // 基础控制信号
@@ -1521,8 +1523,8 @@ always @(posedge clk or negedge rst_n) begin
                 pc_reg <= pc_i; // 保持PC值不变
 
                 //rs1,rs2需要在这种情况下保留吗？
-                rs1_reg <= rs1_i;
-                rs2_reg <= rs2_i;
+                rs1_reg <= 5'b0;
+                rs2_reg <= 5'b0;
             end
             2'b01: begin  // 保持当前状态（阻塞）
                 // 所有寄存器保持不变
