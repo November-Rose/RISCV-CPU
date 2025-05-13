@@ -1027,11 +1027,9 @@ end
         .data2(data2),
         .rs1_en(en1),
         .rs2_en(en2),
-        .imm_en(imm_en),
         .load(load),
         .opcode(op),
         .pc(pc),
-        //.func3(func3),
         .decode_rd(rd), 
         .rd_en(rd_en),
         .exdata(exdata),
@@ -1142,12 +1140,9 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
     input [31:0] data2,
     input rs1_en,
     input rs2_en,
-    input imm_en,
-    //input jump_en,
-    input load,//wire load=mem_op[3];
+    input load,
     input [6:0] opcode,//用于分支指令
     input [31:0] pc,
-    //input [2:0] func3,
     input [4:0] decode_rd,
     input rd_en,
     input [31:0] exdata,
@@ -1156,20 +1151,19 @@ module feedforward(//含选择op1与op2，op1与op2直接接入alu
     output stall,
     output [31:0] op1,
     output [31:0] op2
-    //output [4:0]alu_op
 );
 reg [14:0] rd;
 reg [2:0]  en;
-wire [4:0] newrd;
-assign newrd=rd_en?decode_rd:5'b0;
-wire [3:0] flag;
 wire alu_imm_en;
 
 assign alu_imm_en= (opcode == 7'b0010011 || opcode == 7'b0000011 || opcode == 7'b1100111);//根据rv32i指令集的op与imm_en确定出哪些指令的alu运算中涉及立即数
-assign flag[3]=(rs2[4:0]==rd[9:5]&&rs2_en&&en[1])?1:0;
-assign flag[2]=(rs1[4:0]==rd[9:5]&&rs1_en&&en[1])?1:0;
-assign flag[1]=(rs2[4:0]==rd[4:0]&&rs2_en&&en[0])?1:0;
-assign flag[0]=(rs1[4:0]==rd[4:0]&&rs1_en&&en[0])?1:0;  
+//------------------------------------------
+    // 数据冒险检测信号（重命名 flag 为更清晰的名称）
+    //------------------------------------------
+    wire rs1_dep_ex  = (rs1 == rd[4:0]) && rs1_en && en[0];  // rs1 依赖 EX 阶段结果
+    wire rs1_dep_mem = (rs1 == rd[9:5]) && rs1_en && en[1];   // rs1 依赖 MEM 阶段结果
+    wire rs2_dep_ex  = (rs2 == rd[4:0]) && rs2_en && en[0];   // rs2 依赖 EX 阶段结果
+    wire rs2_dep_mem = (rs2 == rd[9:5]) && rs2_en && en[1];   // rs2 依赖 MEM 阶段结果
 //串行存储3个rd
 always@(posedge clk or negedge rst_n)
 begin
@@ -1179,62 +1173,42 @@ begin
         en[2:0]=3'd0;
     end
     else begin
-        rd[14:0]={rd[9:0],newrd[4:0]};
+        rd[14:0]={rd[9:0],decode_rd};
         en[2:0]={en[1:0],rd_en};
     end
 end
 //stall产生
-assign stall=load&(flag[1]|flag[0]);
+assign stall=load&(rs2_dep_ex |rs1_dep_ex);
 //5选2决定op1，op2
-reg [31:0] op1reg;
-reg [31:0] op2reg;
-always @(*) begin
-    if (opcode == 7'b1101111) begin // jal
-        op1reg = pc;
-        op2reg = imm;
-    end
-    else begin // 其他情况
-        if (alu_imm_en) begin
-            op2reg = imm; // op2 固定为立即数
-            case (flag)
-                4'b0000: op1reg = data1;
-                4'b0001: op1reg = exdata;
-                4'b0100: op1reg = memdata;
-                default: op1reg = 32'd0;
-            endcase
+ reg [31:0] op1_selected, op2_selected;
+
+    always @(*) begin
+        // JAL 指令特殊处理（op1=PC, op2=imm）
+        if (opcode == 7'b1101111) begin
+            op1_selected = pc;
+            op2_selected = imm;
         end
+        // 其他指令
         else begin
-            case (flag) // 无立即数时，op1 和 op2 需同时处理
-                4'b0000: begin
-                    op1reg = data1;
-                    op2reg = data2;
-                end
-                4'b0001: begin
-                    op1reg = exdata;
-                    op2reg = data2;
-                end
-                4'b0100: begin
-                    op1reg = memdata;
-                    op2reg = data2;
-                end
-                4'b1000: begin
-                    op1reg = data1;
-                    op2reg = memdata;
-                end
-                4'b0010: begin
-                    op1reg = data1;
-                    op2reg = exdata;
-                end
-                default: begin
-                    op1reg = 32'd0;
-                    op2reg = 32'd0;
-                end
-            endcase
+            // 操作数1前馈选择
+            if (rs1_dep_ex)       op1_selected = exdata;    // 前一条指令的结果
+            else if (rs1_dep_mem) op1_selected = memdata;  // 前两条指令的结果
+            else op1_selected=data1;
+
+            // 操作数2选择：立即数或前馈数据
+            if (alu_imm_en) begin
+                op2_selected = imm;  // 立即数指令固定用 imm
+            end else if (rs2_dep_ex) begin
+                op2_selected = exdata;
+            end else if (rs2_dep_mem) begin
+                op2_selected = memdata;
+            end
+            else op2_selected=data2;
         end
     end
-end
-assign op1=op1reg;
-assign op2=op2reg;
+
+    assign op1 = op1_selected;
+    assign op2 = op2_selected;
 
 endmodule
 
