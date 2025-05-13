@@ -80,10 +80,7 @@ module cputop(
     wire [31:0] ex_correctpc;
     
 
-    assign datamem_op=idex_mem_op[2:0];
-    assign datamem_w_en=idex_mem_op[3];
-    assign datamem_addr=exmem_result_addr;
-    assign datamem_dataw=idex_data2;
+    
 
      // EX/MEM寄存器信号
     wire        exmem_wb_en;
@@ -92,7 +89,7 @@ module cputop(
     wire        exmem_read_en;
     wire [4:0]  exmem_rd;
     wire        exmem_s_flag;
-    
+    wire [4:0]  exmem_mem_op;
     // MEM/WB寄存器信号
     wire        memwb_wb_en;
     wire [31:0] memwb_result;
@@ -122,6 +119,10 @@ module cputop(
         end
     end
 
+    assign datamem_op=exmem_mem_op[2:0];
+    assign datamem_w_en=idex_mem_op[3];
+    assign datamem_addr=exmem_result_addr;
+    assign datamem_dataw=idex_data2;
     // ====================== 模块实例化 ======================
 
     // ---------------------- IF ----------------------
@@ -280,6 +281,7 @@ module cputop(
         .brunch_taken_i(brunch_taken),
         .s_flag_i(idex_s_flag),
         .result_addr_i(ex_result_addr),
+        .exmem_mem_op_i(idex_mem_op),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
@@ -288,7 +290,8 @@ module cputop(
         .update_en_o(update_en_o),
         .brunch_taken_o(brunch_taken_o),
         .s_flag_o(exmem_s_flag),
-        .result_addr_o(exmem_result_addr)
+        .result_addr_o(exmem_result_addr),
+        .exmem_mem_op_o(exmem_mem_op)
     );
     
 
@@ -1275,9 +1278,10 @@ module exmemreg(
     input         clk,          // 时钟
     input         rst_n,        // 异步复位（低电平有效）
     input         stall,
-    input         s_flag_i,
+    
     
     // 来自执行阶段（EX）的数据
+    input         s_flag_i,
     input  [31:0] result_i,     // ALU计算结果
     input  [4:0]  rd_i,         // 目标寄存器编号
     input         wb_en_i,      // 写回使能
@@ -1285,6 +1289,7 @@ module exmemreg(
     input         update_en_i,
     input         brunch_taken_i,
     input [31:0]  result_addr_i,
+    input [4:0]        exmem_mem_op_i,
     
     // 传递到访存阶段（MEM）的信号
     output        wb_en_o,      // 写回使能
@@ -1294,7 +1299,8 @@ module exmemreg(
     output         update_en_o,
     output         brunch_taken_o,
     output         s_flag_o,
-    output [31:0]  result_addr_o
+    output [31:0]  result_addr_o,
+    output [4:0]   exmem_mem_op_o
 );
 
 // ===== 寄存器声明 =====
@@ -1306,6 +1312,7 @@ reg        read_en_reg;
 reg        update_en_reg;
 reg        brunch_taken_reg;
 reg        s_flag_reg;
+reg [4:0]  mem_op_reg;
 // ===== 时序逻辑 =====
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -1318,7 +1325,7 @@ always @(posedge clk or negedge rst_n) begin
         brunch_taken_reg<= 1'b0;
         s_flag_reg<=1'b1;
         result_addr_reg<=1'b0;
-
+        mem_op_reg<=5'b0;
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1330,6 +1337,7 @@ always @(posedge clk or negedge rst_n) begin
         brunch_taken_reg<=brunch_taken_i;
         result_addr_reg<=result_addr_i;
         s_flag_reg<=s_flag_i||stall;
+        mem_op_reg<=exmem_mem_op_i;
     end
 end
 
@@ -1342,6 +1350,7 @@ assign update_en_o=update_en_reg;
 assign brunch_taken_o=brunch_taken_reg;
 assign s_flag_o=s_flag_reg;
 assign result_addr_o=result_addr_reg;
+assign exmem_mem_op_o=mem_op_reg;
 endmodule
 
 module ifidreg(
