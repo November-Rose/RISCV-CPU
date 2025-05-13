@@ -82,12 +82,13 @@ module cputop(
 
     assign datamem_op=idex_mem_op[2:0];
     assign datamem_w_en=idex_mem_op[3];
-    assign datamem_addr=ex_result_addr;
+    assign datamem_addr=exmem_result_addr;
     assign datamem_dataw=idex_data2;
 
      // EX/MEM寄存器信号
     wire        exmem_wb_en;
     wire [31:0] exmem_result;
+    wire [31:0] exmem_result_addr;
     wire        exmem_read_en;
     wire [4:0]  exmem_rd;
     wire        exmem_s_flag;
@@ -278,6 +279,7 @@ module cputop(
         .update_en_i(update_en),
         .brunch_taken_i(brunch_taken),
         .s_flag_i(idex_s_flag),
+        .result_addr_i(ex_result_addr),
 
         .wb_en_o(exmem_wb_en),
         .result_o(exmem_result),
@@ -285,7 +287,8 @@ module cputop(
         .rd_o(exmem_rd),
         .update_en_o(update_en_o),
         .brunch_taken_o(brunch_taken_o),
-        .s_flag_o(exmem_s_flag)
+        .s_flag_o(exmem_s_flag),
+        .result_addr_o(exmem_result_addr)
     );
     
 
@@ -948,8 +951,15 @@ module ex (
     localparam OP_SRA  = 4'b0111;
     localparam OP_OR   = 4'b1000;
     localparam OP_AND  = 4'b1001;
-
-    wire load = mem_op[4];
+    reg load_reg;
+    always@(posedge clk or negedge rst_n)
+    begin
+        if(!rst_n)
+            load_reg=1'b0;
+        else
+            load_reg=mem_op[4];
+    end
+    wire load = load_reg;
     reg [3:0] alu_op;
     wire [31:0] alu_result;
     wire [31:0] op1, op2;
@@ -1274,6 +1284,7 @@ module exmemreg(
     input         read_en_i,
     input         update_en_i,
     input         brunch_taken_i,
+    input [31:0]  result_addr_i,
     
     // 传递到访存阶段（MEM）的信号
     output        wb_en_o,      // 写回使能
@@ -1282,11 +1293,13 @@ module exmemreg(
     output        read_en_o,
     output         update_en_o,
     output         brunch_taken_o,
-    output         s_flag_o
+    output         s_flag_o,
+    output [31:0]  result_addr_o
 );
 
 // ===== 寄存器声明 =====
 reg [31:0] result_reg;    // ALU结果寄存器
+reg [31:0] result_addr_reg;
 reg [4:0]  rd_reg;        // 目标寄存器编号寄存器
 reg        wb_en_reg;     // 写回使能寄存器
 reg        read_en_reg;
@@ -1304,6 +1317,8 @@ always @(posedge clk or negedge rst_n) begin
         update_en_reg<= 1'b0;
         brunch_taken_reg<= 1'b0;
         s_flag_reg<=1'b1;
+        result_addr_reg<=1'b0;
+
     end
     else begin
         // 时钟上升沿锁存输入信号
@@ -1313,6 +1328,7 @@ always @(posedge clk or negedge rst_n) begin
         read_en_reg<=read_en_i;
         update_en_reg<=update_en_i;
         brunch_taken_reg<=brunch_taken_i;
+        result_addr_reg<=result_addr_i;
         s_flag_reg<=s_flag_i||stall;
     end
 end
@@ -1325,6 +1341,7 @@ assign read_en_o= read_en_reg;
 assign update_en_o=update_en_reg;
 assign brunch_taken_o=brunch_taken_reg;
 assign s_flag_o=s_flag_reg;
+assign result_addr_o=result_addr_reg;
 endmodule
 
 module ifidreg(
