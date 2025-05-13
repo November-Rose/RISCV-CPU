@@ -1079,7 +1079,8 @@ end
     assign correctpc=correctpcreg;
     assign result_address=(op == 7'b0100011||op == 7'b0000011)?alu_result:32'd0;//store:resultaddress是算出来的，result是rs2；load:address是算出来的，result未定
     assign exresult = (op == 7'b0010111) ? (pc + imm) :  // AUIPC
-                 (op == 7'b0110111) ? imm :         // LUI
+                 (op == 7'b0110111) ? imm :     // LUI
+                 (op == 7'b1101111 || op == 7'b1100111) ? (pc + 4) : //NOTES:JAL/JALR: 返回地址固定为 PC+4       
                  (op == 7'b0100011) ? op2 : alu_result;      // Store或其他指令
     assign update_en=jump_en;
     assign brunch_taken=jumpflag;
