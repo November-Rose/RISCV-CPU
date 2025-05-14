@@ -851,153 +851,110 @@ endmodule
 //CHANGE:新增BTB模块用于预测分支指令跳转的地址
 // BTB模块定义，使用参数化设计，方便调整BTB大小和地址位宽
 module BTB #(
-    parameter BTB_SIZE = 16,  // BTB的条目数量，可根据需要调整
-    parameter ADDR_WIDTH = 32 // 地址位宽，可根据需要调整
+    parameter BTB_SIZE = 16,       // BTB的条目数量，必须是2的幂次方
+    parameter ADDR_WIDTH = 32,     // 地址位宽
+    parameter BTB_INDEX_WIDTH = 4  // log2(BTB_SIZE)
 ) (
-    input wire clk,           // 时钟信号，用于同步模块的操作
-    input wire rst_n,         // 异步复位信号，低电平有效，用于将BTB模块复位到初始状态
-    input wire jxx,
-    input wire bxx,
-    input wire [ADDR_WIDTH-1:0] pc, // 分支指令的地址，用于查找和存储操作
-    //NOTES:target_addr在执行阶段产生，为预测地址与实际地址不一致时，分支指令的实际跳转地址
-    input wire [ADDR_WIDTH-1:0] target_addr, // 分支指令的目标地址，用于存储操作
-    //NOTES:update_en 信号的产生:执行阶段。比较实际的分支目标地址和 BTB 预测的目标地址。若两者不一致，表明预测错误，需要更新 BTB 中的信息；若一致，则说明预测正确。
-    input wire update_en,     // 更新使能信号，用于控制是否更新BTB中的信息
-    output reg [ADDR_WIDTH-1:0] predicted_target_addr, // 预测的分支目标地址，如果未命中则输出无效值
-    output reg btb_hit            // 命中信号，表示是否在BTB中找到匹配的分支指令地址
+    input wire clk,                // 时钟信号
+    input wire rst_n,              // 异步复位，低电平有效
+    input wire jxx,                // 无条件跳转指令
+    input wire bxx,                // 条件分支指令
+    input wire [ADDR_WIDTH-1:0] pc,// 分支指令地址
+    input wire [ADDR_WIDTH-1:0] target_addr, // 分支目标地址
+    input wire update_en,          // 更新使能信号
+    output reg [ADDR_WIDTH-1:0] predicted_target_addr, // 预测目标地址
+    output reg btb_hit             // 命中信号
 );
 
-    // BTB条目结构体
-    // 存储分支指令的地址
-    reg [ADDR_WIDTH-1:0] btb_branch_addr [BTB_SIZE-1:0];
-    // 存储分支指令对应的目标地址
-    reg [ADDR_WIDTH-1:0] btb_target_addr [BTB_SIZE-1:0];
-    // 有效位，用于标记每个条目是否有效
-    reg valid [BTB_SIZE-1:0];
-    // 标志是否为分支指令
+    // 分支指令标识
     wire is_branch;
     assign is_branch = jxx || bxx;
 
-    // LRU计数器，用于实现最近最少使用（LRU）替换策略
-    // lru_counter[i][j] 表示第i个条目相对于第j个条目的使用频率关系
-    reg [BTB_SIZE-1:0] lru_counter [BTB_SIZE-1:0];
+    // BTB条目结构
+    reg [ADDR_WIDTH-1:0] btb_branch_addr [0:BTB_SIZE-1];
+    reg [ADDR_WIDTH-1:0] btb_target_addr [0:BTB_SIZE-1];
+    reg [BTB_SIZE-1:0] valid;      // 有效位
+    reg [BTB_INDEX_WIDTH-1:0] lru_bits [0:BTB_SIZE-1]; // 每个条目使用计数器作为LRU位
 
-    integer i, j;
-    integer empty_index;
-    integer lru_index;
-    integer max_lru;
-    integer lru_sum;
-    // 异步复位和正常操作逻辑
+    // 哈希索引生成
+    wire [BTB_INDEX_WIDTH-1:0] hash_index;
+    assign hash_index = pc[BTB_INDEX_WIDTH+1:2];
+    reg [BTB_INDEX_WIDTH-1:0] min_lru;
+    reg [BTB_INDEX_WIDTH-1:0] replace_idx;
+    reg found_invalid;
+    // 命中检测和替换逻辑
+    integer i; // 声明循环变量
+
     always @(posedge clk or negedge rst_n) begin
-        // 异步复位操作
         if (!rst_n) begin
-            // 遍历BTB的所有条目
+            // 复位所有条目
+            valid <= {BTB_SIZE{1'b0}};
+            btb_hit <= 1'b0;
+            predicted_target_addr <= {ADDR_WIDTH{1'b0}};
+            
+            // 初始化所有条目
             for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                // 将所有条目的有效位置为0，表示无效
-                valid[i] <= 1'b0;
-                // 初始化LRU计数器
-                for (j = 0; j < BTB_SIZE; j = j + 1) begin
-                    lru_counter[i][j] <= 1'b0;
-                end
+                btb_branch_addr[i] <= {ADDR_WIDTH{1'b0}};
+                btb_target_addr[i] <= {ADDR_WIDTH{1'b0}};
+                lru_bits[i] <= {BTB_INDEX_WIDTH{1'b0}};
             end
         end else begin
+            // 默认值
+            btb_hit <= 1'b0;
+            predicted_target_addr <= {ADDR_WIDTH{1'b0}};
+            
+            // 查找操作
             if (is_branch) begin
-                // 正常操作
-                // 查找操作
-                // 初始化命中信号为0，表示未命中
-                btb_hit <= 1'b0;
-                // 初始化预测的目标地址为全零，表示无效值
-                predicted_target_addr <= {ADDR_WIDTH{1'b0}};
-                // 遍历BTB的所有条目
-                for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                    // 检查当前条目是否有效且分支指令地址匹配
-                    if (valid[i] && btb_branch_addr[i] == pc) begin
-                        // 命中，将命中信号置为1
-                        btb_hit <= 1'b1;
-                        // 输出预测的目标地址
-                        predicted_target_addr <= btb_target_addr[i];
-                        // 更新LRU计数器
-                        for (j = 0; j < BTB_SIZE; j = j + 1) begin
-                            if (j != i) begin
-                                // 其他条目相对于当前条目更旧
-                                lru_counter[j][i] <= 1'b1;
-                            end else begin
-                                // 当前条目相对于自身最新
-                                lru_counter[j][i] <= 1'b0;
-                            end
-                        end
-                    end
+                if (valid[hash_index] && btb_branch_addr[hash_index] == pc) begin
+                    btb_hit <= 1'b1;
+                    predicted_target_addr <= btb_target_addr[hash_index];
+                    // 更新命中条目的LRU为最大值
+                    lru_bits[hash_index] <= {BTB_INDEX_WIDTH{1'b1}};
                 end
             end
-
-            // 存储操作
-            if (is_branch && !btb_hit) begin
-                empty_index = -1;
-                lru_index = 0;
-                max_lru = 0;
-                // 查找空闲条目
-                for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                    if (!valid[i]) begin
-                        empty_index = i;
-                        break;
-                    end
-                end
-                // 如果没有空闲条目，使用LRU策略选择要替换的条目
-                if (empty_index == -1) begin
-                    for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                        lru_sum = 0;
-                        // 计算每个条目的LRU计数器之和
-                        for (j = 0; j < BTB_SIZE; j = j + 1) begin
-                            lru_sum = lru_sum + lru_counter[i][j];
-                        end
-                        if (lru_sum > max_lru) begin
-                            max_lru = lru_sum;
-                            lru_index = i;
-                        end
-                    end
-                    // 替换LRU条目
-                    btb_branch_addr[lru_index] <= pc;
-                    btb_target_addr[lru_index] <= target_addr;
-                    valid[lru_index] <= 1'b1;
-                    // 更新LRU计数器
-                    for (j = 0; j < BTB_SIZE; j = j + 1) begin
-                        if (j != lru_index) begin
-                            lru_counter[j][lru_index] <= 1'b1;
-                        end else begin
-                            lru_counter[j][lru_index] <= 1'b0;
-                        end
-                    end
-                end else begin
-                    // 使用空闲条目存储新的分支信息
-                    btb_branch_addr[empty_index] <= pc;
-                    btb_target_addr[empty_index] <= target_addr;
-                    valid[empty_index] <= 1'b1;
-                    // 更新LRU计数器
-                    for (j = 0; j < BTB_SIZE; j = j + 1) begin
-                        if (j != empty_index) begin
-                            lru_counter[j][empty_index] <= 1'b1;
-                        end else begin
-                            lru_counter[j][empty_index] <= 1'b0;
-                        end
-                    end
-                end
-            end
-
+            
             // 更新操作
             if (update_en) begin
-                // 如果预测错误，更新目标地址
-                if (btb_hit && btb_target_addr[i] != target_addr) begin
+                if (valid[hash_index] && btb_branch_addr[hash_index] == pc) begin
+                    // 更新已有条目
+                    if (btb_target_addr[hash_index] != target_addr) begin
+                        btb_target_addr[hash_index] <= target_addr;
+                    end
+                    lru_bits[hash_index] <= {BTB_INDEX_WIDTH{1'b1}}; // 更新LRU
+                end else begin
+                    // 查找无效条目或LRU值最小的条目进行替换
+                    
+                    min_lru <= {BTB_INDEX_WIDTH{1'b1}};
+                    replace_idx <= 0;
+                    found_invalid <= 1'b0;
+                    
                     for (i = 0; i < BTB_SIZE; i = i + 1) begin
-                        if (valid[i] && btb_branch_addr[i] == pc) begin
-                            btb_target_addr[i] <= target_addr;
+                        if (!valid[i] && !found_invalid) begin
+                            replace_idx <= i;
+                            found_invalid <= 1'b1;
+                        end else if (lru_bits[i] < min_lru && !found_invalid) begin
+                            min_lru <= lru_bits[i];
+                            replace_idx <= i;
                         end
+                    end
+                    
+                    // 替换选中的条目
+                    btb_branch_addr[replace_idx] <= pc;
+                    btb_target_addr[replace_idx] <= target_addr;
+                    valid[replace_idx] <= 1'b1;
+                    lru_bits[replace_idx] <= {BTB_INDEX_WIDTH{1'b1}};
+                end
+                
+                // 递减其他条目的LRU值
+                for (i = 0; i < BTB_SIZE; i = i + 1) begin
+                    if (valid[i] && i != hash_index) begin
+                        lru_bits[i] <= lru_bits[i] - 1;
                     end
                 end
             end
         end
     end
-endmodule    
-
+endmodule
 module decoder (
     //========== 输入 ==========//
     input  [31:0] instr,         // 来自IF/ID寄存器的指令
